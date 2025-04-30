@@ -24,6 +24,59 @@ typedef struct _USR {
 USR *head = NULL;
 USR *tail = NULL;
 
+void print_client_list() {
+	
+	USR *cur = head;
+
+	
+	printf("CONNECTED CLIENTS:\n");
+	while (cur != NULL) {
+		struct sockaddr_in addr;
+		socklen_t len = sizeof(addr);
+		if (getpeername(cur->clisockfd, (struct sockaddr*)&addr, &len) < 0) {
+			error("ERROR Unknown client!");
+		}
+
+		printf("%s\n", inet_ntoa(addr.sin_addr));
+		cur = cur->next;
+	}
+}
+
+void remove_client(int sockfd) {
+	USR *cur = head;
+	USR *prev;
+	
+	/* find client in client list */
+	while (cur != NULL && cur->clisockfd != sockfd) {
+		prev = cur;
+		cur = cur->next;
+	}
+
+	/* remove client from client list */
+	if (cur == head) {
+		if (head == tail) {
+			head = NULL;
+			tail = NULL;
+			free(cur);
+		}
+		else {
+			head = cur->next;
+			cur->next = NULL;
+			free(cur);
+		}
+	}
+	else if (cur == tail) {
+		prev->next = NULL;
+		tail = prev;
+		free(cur);
+	}
+	else {
+		prev->next = cur->next;
+		cur->next = NULL;
+		free(cur);
+	}
+}
+
 void add_tail(int newclisockfd)
 {
 	if (head == NULL) {
@@ -94,9 +147,20 @@ void* thread_main(void* args)
 		nrcv = recv(clisockfd, buffer, 255, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
 	}
+	
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+	if (getpeername(clisockfd, (struct sockaddr*)&addr, &len) < 0) {
+		error("ERROR Unknown sender!");
+	}
 
 	close(clisockfd);
 	//-------------------------------
+	
+	remove_client(clisockfd);
+	printf("Disconnected: %s\n", inet_ntoa(addr.sin_addr));
+	
+	print_client_list();
 
 	return NULL;
 }
@@ -130,6 +194,8 @@ int main(int argc, char *argv[])
 		printf("Connected: %s\n", inet_ntoa(cli_addr.sin_addr));
 		add_tail(newsockfd); // add this new client to the client list
 
+		print_client_list();
+		
 		// prepare ThreadArgs structure to pass client socket
 		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 		if (args == NULL) error("ERROR creating thread argument");
