@@ -11,6 +11,8 @@
 
 #define PORT_NUM 1004
 
+#define MAX_USERNAME_LEN 32
+
 void error(const char *msg)
 {
 	perror(msg);
@@ -32,6 +34,7 @@ void* thread_main_recv(void* args)
 	char buffer[512];
 	int n;
 
+	memset(buffer, 0, 512);
 	n = recv(sockfd, buffer, 512, 0);
 	while (n > 0) {
 		memset(buffer, 0, 512);
@@ -77,6 +80,12 @@ int main(int argc, char *argv[])
 {
 	if (argc < 2) error("Please speicify hostname");
 
+	/* get username from user */
+	char username[MAX_USERNAME_LEN];
+	printf("Type your user name: ");
+	fgets(username, MAX_USERNAME_LEN - 1, stdin);
+	username[strlen(username) - 1] = '\0'; // get rid of newline char
+
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
 
@@ -100,12 +109,15 @@ int main(int argc, char *argv[])
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
-	pthread_create(&tid1, NULL, thread_main_send, (void*) args);
-
-	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	args->clisockfd = sockfd;
 	pthread_create(&tid2, NULL, thread_main_recv, (void*) args);
 
+	int n = send(sockfd, username, strlen(username), 0);
+	if (n < 0) error("ERROR writing to socket");
+	
+	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	args->clisockfd = sockfd;
+	pthread_create(&tid1, NULL, thread_main_send, (void*) args);
+	
 	// parent will wait for sender to finish (= user stop sending message and disconnect from server)
 	pthread_join(tid1, NULL);
 
