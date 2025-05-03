@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <time.h>
 
 #define PORT_NUM 1004
 
@@ -86,7 +87,7 @@ void remove_color(int color) {
 	}
 }
 
-char* get_color(int* color_code) {
+int get_color_code() {
 
 	int random_color_code;
 	
@@ -94,8 +95,8 @@ char* get_color(int* color_code) {
 	int color_found = 0;
 
 	while (color_found == 0) {
+		srand(time(NULL));
 		random_color_code = (rand() % 215) + 16;
-		srand(random_color_code);
 		
 		int matched = 0;
 
@@ -117,18 +118,10 @@ char* get_color(int* color_code) {
 			color_found = 1;
 		}
 	}
-	*color_code = random_color_code;
-
-	char full_color[32];
-	sprintf(full_color, "\033[38;5;%dm", random_color_code);
-	
-
-	char* color = malloc(sizeof(char) * (strlen(full_color)));
-	strncpy(color, full_color, strlen(full_color));
 
 	add_color(random_color_code);
 
-	return color;
+	return random_color_code;
 }
 
 void print_client_list() {
@@ -200,7 +193,7 @@ void add_tail(int newclisockfd, char* username)
 	}
 }
 
-void broadcast(int fromfd, char* username, char* color, char* message)
+void broadcast(int fromfd, char* username, int color_code, char* message)
 {
 	// figure out sender address
 	struct sockaddr_in cliaddr;
@@ -217,7 +210,7 @@ void broadcast(int fromfd, char* username, char* color, char* message)
 		if (cur->clisockfd != fromfd) {
 			memset(buffer, 0, 512);
 			// prepare message
-			sprintf(buffer, "%s[%s (%s)]:%s\033[0m", color, username, inet_ntoa(cliaddr.sin_addr), message);
+			sprintf(buffer, "\033[38;5;%dm[%s (%s)]:%s\033[0m", color_code, username, inet_ntoa(cliaddr.sin_addr), message);
 			int nmsg = strlen(buffer);
 
 			// send!
@@ -305,8 +298,7 @@ void* thread_main(void* args)
 	char buffer[256];
 	int nsen, nrcv;
 	
-	int color_code;
-	char* color = get_color(&color_code);
+	int color_code = get_color_code();
 
 	memset(buffer, 0, 256);
 	nrcv = recv(clisockfd, buffer, 255, 0);
@@ -314,7 +306,7 @@ void* thread_main(void* args)
 
 	while (nrcv > 0) {
 		// we send the message to everyone except the sender
-		broadcast(clisockfd, username, color, buffer);
+		broadcast(clisockfd, username, color_code, buffer);
 
 		memset(buffer, 0, 256);
 		nrcv = recv(clisockfd, buffer, 255, 0);
@@ -330,7 +322,6 @@ void* thread_main(void* args)
 	remove_client(clisockfd);
 	
 	remove_color(color_code);
-	free(color);
 
 	close(clisockfd);
 	//-------------------------------
