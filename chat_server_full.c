@@ -12,8 +12,11 @@
 #define PORT_NUM 1004
 
 #define MAX_USERNAME_LEN 32
+#define BUFFER_SIZE 256
 #define JOINED 1
 #define LEFT 0
+
+int server_stop = 0; // for future use: see main function comments
 
 void error(const char *msg)
 {
@@ -31,7 +34,195 @@ typedef struct _USR {
 USR *head = NULL;
 USR *tail = NULL;
 
-int get_color_code(int sockfd) {
+typedef struct _ROOM {
+	int room_number;
+	USR* usr_head;
+	USR* usr_tail;
+	struct _ROOM* next;
+} ROOM;
+
+ROOM* room_head = NULL;
+ROOM* room_tail = NULL;
+
+int create_room()
+{
+	if (room_head == NULL) {
+		room_head = (ROOM*) malloc(sizeof(ROOM));
+		room_head->room_number = 1;
+		room_head->usr_head = NULL;
+		room_head->usr_tail = NULL;
+		room_head->next = NULL;
+		room_tail = room_head;
+	} else {
+		room_tail->next = (ROOM*) malloc(sizeof(ROOM));
+		room_tail->next->room_number = room_tail->room_number + 1;
+		room_tail->next->usr_head = NULL;
+		room_tail->next->usr_tail = NULL;
+		room_tail->next->next = NULL;
+		room_tail = room_tail->next;
+	}
+
+	return room_tail->room_number;
+}
+
+void remove_room(int room_number) {
+	ROOM* cur = room_head;
+	ROOM* prev;
+	
+	/* find room in room list, track previous */
+	while (cur != NULL) {
+		if (cur->room_number == room_number) {
+			break;
+		}
+		else {
+			prev = cur;
+			cur = cur->next;
+		}
+	}
+
+	/* remove room from room list */
+	// if room is head of list
+	if (cur == room_head) {
+		if (room_head == room_tail) {
+			room_head = NULL;
+			room_tail = NULL;
+			free(cur);
+		}
+		else {
+			room_head = cur->next;
+			cur->next = NULL;
+			free(cur);
+		}
+	}
+	// if room is tail of list
+	else if (cur == room_tail) {
+		prev->next = NULL;
+		room_tail = prev;
+		free(cur);
+	}
+	// if room is neither head or tail of list
+	else {
+		prev->next = cur->next;
+		cur->next = NULL;
+		free(cur);
+	}
+}
+
+ROOM* find_room(int room_number) {
+
+	ROOM* cur_room = room_head;
+	
+	while(cur_room != NULL) {
+		// if room found, return cur_room
+		if (cur_room->room_number == room_number) {
+			return cur_room;
+		}
+		else {
+			cur_room = cur_room->next;
+		}
+	}
+	// if cur_room not found, return NULL;
+	return NULL;
+}
+
+void add_client(ROOM* room, int newclisockfd, char* username)
+{
+	/* add client to room */
+	// if room is empty, add client to head of user list
+	if (room->usr_head == NULL) {
+		room->usr_head = (USR*) malloc(sizeof(USR));
+		room->usr_head->clisockfd = newclisockfd;
+		strncpy(room->usr_head->username, username, MAX_USERNAME_LEN);
+		room->usr_head->next = NULL;
+		room->usr_tail = room->usr_head;
+	} 
+	// if room is not empty, add client to tail of list
+	else {
+		room->usr_tail->next = (USR*) malloc(sizeof(USR));
+		room->usr_tail->next->clisockfd = newclisockfd;
+		strncpy(room->usr_tail->next->username, username, MAX_USERNAME_LEN);
+		room->usr_tail->next->next = NULL;
+		room->usr_tail = room->usr_tail->next;
+	}
+}
+
+void remove_client(ROOM* room, int sockfd) {
+	
+	USR *cur = room->usr_head;
+	USR *prev;
+	
+	/* find client in client list, track previous */
+	while (cur != NULL) {
+		if (cur->clisockfd == sockfd) {
+			break;
+		}
+		else {
+			prev = cur;
+			cur = cur->next;
+		}
+	}
+
+	/* remove client from client list */
+	// if client is head of list
+	if (cur == room->usr_head) {
+		if (room->usr_head == room->usr_tail) {
+			room->usr_head = NULL;
+			room->usr_tail = NULL;
+			free(cur);
+		}
+		else {
+			room->usr_head = cur->next;
+			cur->next = NULL;
+			free(cur);
+		}
+	}
+	// if client is tail of list
+	else if (cur == room->usr_tail) {
+		prev->next = NULL;
+		room->usr_tail = prev;
+		free(cur);
+	}
+	// if client is neither head or tail of list
+	else {
+		prev->next = cur->next;
+		cur->next = NULL;
+		free(cur);
+	}
+}
+
+USR* find_client(ROOM* room, int sockfd) {
+	
+	USR* cur_client = room->usr_head;
+	
+	while (cur_client != NULL) {
+		// if client found, return cur_client
+		if (cur_client->clisockfd == sockfd) {
+			return cur_client;
+		}
+		cur_client = cur_client->next;
+	}
+	// if client not found, return NULL
+	return NULL;
+}
+
+void print_client_list(ROOM* room) {
+	
+	USR *cur = room->usr_head;
+
+	printf("CONNECTED CLIENTS IN ROOM %d:\n", room->room_number);
+	while (cur != NULL) {
+		struct sockaddr_in addr;
+		socklen_t len = sizeof(addr);
+		if (getpeername(cur->clisockfd, (struct sockaddr*)&addr, &len) < 0) {
+			error("ERROR Unknown client!");
+		}
+
+		printf("%s (%s)\n", cur->username, inet_ntoa(addr.sin_addr));
+		cur = cur->next;
+	}
+}
+
+int get_color_code(ROOM* room, USR* client) {
 
 	int random_color_code;
 	USR* cur;
@@ -47,14 +238,14 @@ int get_color_code(int sockfd) {
 		int taken = 0;
 		
 		// determine if color code is already taken
-		if (head == NULL) {
+		if (room->usr_head == NULL) {
 			color_found = 1;
 		}
 		else {
-			cur = head;
+			cur = room->usr_head;
 			while (cur != NULL) {
 				// if taken, pick another color
-				if ((cur->clisockfd != sockfd) && (cur->color_code == random_color_code)) {
+				if ((cur->clisockfd != client->clisockfd) && (cur->color_code == random_color_code)) {
 					taken = 1;
 					break;
 				}
@@ -67,97 +258,19 @@ int get_color_code(int sockfd) {
 		}
 	}
 	
-	// find new socket, set random color code
-	cur = head;
-	while (cur != NULL) {
-		if (cur->clisockfd == sockfd) {
-			cur->color_code = random_color_code;
-			break;
-		}
-		cur = cur->next;
-	}
+	client->color_code = random_color_code;
 
 	return random_color_code;
 }
-
-void print_client_list() {
-	
-	USR *cur = head;
-
-	printf("CONNECTED CLIENTS:\n");
-	while (cur != NULL) {
-		struct sockaddr_in addr;
-		socklen_t len = sizeof(addr);
-		if (getpeername(cur->clisockfd, (struct sockaddr*)&addr, &len) < 0) {
-			error("ERROR Unknown client!");
-		}
-
-		printf("%s (%s)\n", cur->username, inet_ntoa(addr.sin_addr));
-		cur = cur->next;
-	}
-}
-
-void remove_client(int sockfd) {
-	USR *cur = head;
-	USR *prev;
-	
-	/* find client in client list */
-	while (cur != NULL && cur->clisockfd != sockfd) {
-		prev = cur;
-		cur = cur->next;
-	}
-
-	/* remove client from client list */
-	if (cur == head) {
-		if (head == tail) {
-			head = NULL;
-			tail = NULL;
-			free(cur);
-		}
-		else {
-			head = cur->next;
-			cur->next = NULL;
-			free(cur);
-		}
-	}
-	else if (cur == tail) {
-		prev->next = NULL;
-		tail = prev;
-		free(cur);
-	}
-	else {
-		prev->next = cur->next;
-		cur->next = NULL;
-		free(cur);
-	}
-}
-
-void add_tail(int newclisockfd, char* username)
-{
-	if (head == NULL) {
-		head = (USR*) malloc(sizeof(USR));
-		head->clisockfd = newclisockfd;
-		strncpy(head->username, username, MAX_USERNAME_LEN);
-		head->next = NULL;
-		tail = head;
-	} else {
-		tail->next = (USR*) malloc(sizeof(USR));
-		tail->next->clisockfd = newclisockfd;
-		strncpy(tail->next->username, username, MAX_USERNAME_LEN);
-		tail->next->next = NULL;
-		tail = tail->next;
-	}
-}
-
-void broadcast(int fromfd, char* username, int color_code, char* message)
+void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message)
 {
 	// figure out sender address
 	struct sockaddr_in cliaddr;
 	socklen_t clen = sizeof(cliaddr);
 	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0) error("ERROR Unknown sender!");
 
-	// traverse through all connected clients
-	USR* cur = head;
+	// traverse through all connected clients in room
+	USR* cur = room->usr_head;
 	
 	char buffer[512];
 
@@ -178,7 +291,7 @@ void broadcast(int fromfd, char* username, int color_code, char* message)
 	}
 }
 
-void announce_status(int fromfd, char* username, int status)
+void announce_status(ROOM* room, int fromfd, char* username, int status)
 {
 	// figure out sender address
 	struct sockaddr_in cliaddr;
@@ -192,33 +305,22 @@ void announce_status(int fromfd, char* username, int status)
 	char* status_string;
 	if (status) {
 		status_string = "joined";
-
-			// prepare join announcement specifically for new client
-			memset(buffer, 0, 512);
-			sprintf(buffer, "%s (%s) has %s the chat room!\n", username,
-			inet_ntoa(cliaddr.sin_addr), status_string);
-			int nmsg = strlen(buffer);
-
-			// send!
-			int nsen = send(fromfd, buffer, nmsg, 0);
-			if (nsen != nmsg) error("ERROR send() failed");
 	}
 	else {
 		status_string = "left";
 	}
 
 	// traverse through all connected clients
-	USR* cur = head;
+	USR* cur = room->usr_head;
 	
 	while (cur != NULL) {
 		// check if cur is not the one who sent the message
-		if (cur->clisockfd != fromfd) {
+		if (cur->clisockfd != fromfd || status) {
 			
-			memset(buffer, 0, 512);
-
 			// prepare status announcement
-			sprintf(buffer, "%s (%s) has %s the chat room!\n", username,
-			inet_ntoa(cliaddr.sin_addr), status_string);
+			memset(buffer, 0, 512);
+			sprintf(buffer, "%s (%s) has %s chat room %d!\n", username, 
+			inet_ntoa(cliaddr.sin_addr), status_string, room->room_number);
 			int nmsg = strlen(buffer);
 
 			// send!
@@ -233,6 +335,7 @@ void announce_status(int fromfd, char* username, int status)
 typedef struct _ThreadArgs {
 	char username[MAX_USERNAME_LEN];
 	int clisockfd;
+	int room_number;
 } ThreadArgs;
 
 void* thread_main(void* args)
@@ -244,10 +347,18 @@ void* thread_main(void* args)
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
 	char username[MAX_USERNAME_LEN];
 	strncpy(username, ((ThreadArgs*) args)->username, MAX_USERNAME_LEN);
+	int room_number = ((ThreadArgs*) args)->room_number;
 	free(args);
+	// get room node
+	ROOM* room = find_room(room_number);
 	
-	add_tail(clisockfd, username); // add this new client to the client list
+	// add this new client to the specific client list
+	add_client(room, clisockfd, username);
 	
+	// get client node
+	USR* client = find_client(room, clisockfd);
+	
+	// get peername (ip & other info) of client socket
 	struct sockaddr_in addr;
 	socklen_t len = sizeof(addr);
 	if (getpeername(clisockfd, (struct sockaddr*)&addr, &len) < 0) {
@@ -258,15 +369,17 @@ void* thread_main(void* args)
 	printf("Connected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
 	
 	// print the updated list of clients
-	print_client_list();
+	print_client_list(room);
 	
-	announce_status(clisockfd, username, JOINED);
+	// announce to room that client joined
+	announce_status(room, clisockfd, username, JOINED);
 	//-------------------------------
 	// Now, we receive/send messages
 	char buffer[256];
 	int nsen, nrcv;
 	
-	int color_code = get_color_code(clisockfd);
+	// get color code
+	int color_code = get_color_code(room, client);
 
 	memset(buffer, 0, 256);
 	nrcv = recv(clisockfd, buffer, 255, 0);
@@ -274,7 +387,7 @@ void* thread_main(void* args)
 
 	while (nrcv > 0) {
 		// we send the message to everyone except the sender
-		broadcast(clisockfd, username, color_code, buffer);
+		broadcast(room, clisockfd, username, color_code, buffer);
 
 		memset(buffer, 0, 256);
 		nrcv = recv(clisockfd, buffer, 255, 0);
@@ -282,19 +395,21 @@ void* thread_main(void* args)
 	}
 	
 	// send message to all users that user has left
-	announce_status(clisockfd, username, LEFT);
+	announce_status(room, clisockfd, username, LEFT);
 	
 	// print log in server that user has disconnected
 	printf("Disconnected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
-	
-	remove_client(clisockfd);
+
+	remove_client(room, clisockfd);
 	
 	close(clisockfd);
 	//-------------------------------
 	
-	print_client_list();
+	print_client_list(room);
 	
+	room = NULL;
 
+	client = NULL;
 
 	return NULL;
 }
@@ -318,32 +433,58 @@ int main(int argc, char *argv[])
 
 	listen(sockfd, 5); // maximum number of connections = 5
 	
-	char username[MAX_USERNAME_LEN];
+	char buffer[BUFFER_SIZE];
+	int offset;
 	int nrcv;
 
-	while(1) {
+	while(!server_stop) {
+		offset = 0;
+		
 		struct sockaddr_in cli_addr;
 		socklen_t clen = sizeof(cli_addr);
 		int newsockfd = accept(sockfd, 
 			(struct sockaddr *) &cli_addr, &clen);
 		if (newsockfd < 0) error("ERROR on accept");
 		
-		// retrieve username from client
-		memset(username, 0, MAX_USERNAME_LEN);
-		nrcv = recv(newsockfd, username, MAX_USERNAME_LEN - 1, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
-		
 		// prepare ThreadArgs structure to pass client socket
 		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 		if (args == NULL) error("ERROR creating thread argument");
 		
+		// retrieve room_number and username from client
+		memset(buffer, 0, BUFFER_SIZE);
+		nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
+		if (nrcv < 0) error("ERROR recv() failed");
+		
+		/* set thread args */
+		// set room_number
+		args->room_number = ntohl(*(int *)(buffer));
+		offset += sizeof(int);
+		
+	
+		// set username
+		strncpy(args->username, (buffer + offset), MAX_USERNAME_LEN);
+		offset += strlen(args->username);
+		
+		// set socket file descriptor
 		args->clisockfd = newsockfd;
-		strncpy(args->username, username, MAX_USERNAME_LEN);
+		
+		// if room number = -1, then create new room and assign new room number
+		if (args->room_number == -1) {
+			args->room_number = create_room();
+		}
+		else if (find_room(args->room_number) == NULL) {
+			error("Invalid room number");
+		}
 
 		pthread_t tid;
 		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
 			error("ERROR creating a new thread");
 		}
+
+		/** TODO: possibly create a thread for stopping server
+		 *  IDEA - create a thread that would listen for the server to say exit 
+		 *  or something else along those lines...then thread would clean up all
+		 *  resources and then set server_stop to 0, which would end the program. */
 	}
 
 	return 0; 

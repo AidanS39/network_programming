@@ -12,6 +12,7 @@
 #define PORT_NUM 1004
 
 #define MAX_USERNAME_LEN 32
+#define BUFFER_SIZE 256
 
 void error(const char *msg)
 {
@@ -80,7 +81,25 @@ void* thread_main_send(void* args)
 
 int main(int argc, char *argv[])
 {
-	if (argc < 2) error("Please specify hostname");
+	if (argc < 2) {
+		error("Please specify hostname");
+	}
+
+	if (argc < 3) {
+		error("Please specify room number");
+	}
+	
+	// get room number
+	int room_number;
+	
+	// if new specified, set room number to -1 to signal server to make new room
+	if (strncmp(argv[2], "new", 3) == 0) {
+		// create new room
+		room_number = -1;
+	}
+	else {
+		room_number = (int)strtol(argv[2], NULL, 10);
+	}
 
 	/* get username from user */
 	char username[MAX_USERNAME_LEN];
@@ -111,8 +130,18 @@ int main(int argc, char *argv[])
 	pthread_t tid2;
 
 	ThreadArgs* args;
+	
+	char buffer[BUFFER_SIZE];
+	int offset = 0;
 
-	int n = send(sockfd, username, strlen(username), 0);
+	memset(buffer, 0, BUFFER_SIZE);
+	*(int *)buffer = htonl(room_number);
+	offset += sizeof(int);
+
+	strncpy(buffer + offset, username, strlen(username));
+	offset += strlen(username);
+
+	int n = send(sockfd, buffer, BUFFER_SIZE, 0);
 	if (n < 0) error("ERROR writing to socket");
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
