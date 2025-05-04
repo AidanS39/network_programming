@@ -24,102 +24,58 @@ void error(const char *msg)
 typedef struct _USR {
 	int clisockfd;						// socket file descriptor
 	char username[MAX_USERNAME_LEN];	// client username
+	int color_code;						// user color
 	struct _USR* next;					// for linked list queue
 } USR;
 
 USR *head = NULL;
 USR *tail = NULL;
 
-typedef struct _COLOR_NODE {
-	int color;
-	struct _COLOR_NODE* next;
-} COLOR_NODE;
-
-COLOR_NODE* color_head = NULL;
-COLOR_NODE* color_tail = NULL;
-
-void add_color(int color) {
-	if (color_head == NULL) {
-		color_head = (COLOR_NODE*) malloc(sizeof(COLOR_NODE));
-		color_head->color = color;
-		color_head->next = NULL;
-		color_tail = color_head;
-	} else {
-		color_tail->next = (COLOR_NODE*) malloc(sizeof(COLOR_NODE));
-		color_tail->next->color = color;
-		color_tail->next->next = NULL;
-		color_tail = color_tail->next;
-	}
-}
-
-void remove_color(int color) {
-	COLOR_NODE *cur = color_head;
-	COLOR_NODE *prev_color;
-	
-	/* find color in color list */
-	while (cur != NULL && cur->color != color) {
-		prev_color = cur;
-		cur = cur->next;
-	}
-
-	/* remove client from client list */
-	if (cur == color_head) {
-		if (color_head == color_tail) {
-			color_head = NULL;
-			color_tail = NULL;
-			free(cur);
-		}
-		else {
-			color_head = cur->next;
-			cur->next = NULL;
-			free(cur);
-		}
-	}
-	else if (cur == color_tail) {
-		prev_color->next = NULL;
-		color_tail = prev_color;
-		free(cur);
-	}
-	else {
-		prev_color->next = cur->next;
-		cur->next = NULL;
-		free(cur);
-	}
-}
-
-int get_color_code() {
+int get_color_code(int sockfd) {
 
 	int random_color_code;
+	USR* cur;
+
+	int color_found = 0;
 	
 	// find a unique color code
-	int color_found = 0;
-
 	while (color_found == 0) {
+		// create a random color code
 		srand(time(NULL));
 		random_color_code = (rand() % 6) + 91;
 		
-		int matched = 0;
-
-		if (color_head == NULL) {
+		int taken = 0;
+		
+		// determine if color code is already taken
+		if (head == NULL) {
 			color_found = 1;
 		}
 		else {
-			COLOR_NODE* cur = color_head;
+			cur = head;
 			while (cur != NULL) {
-				if (cur->color == random_color_code) {
-					matched = 1;
+				// if taken, pick another color
+				if ((cur->clisockfd != sockfd) && (cur->color_code == random_color_code)) {
+					taken = 1;
 					break;
 				}
 				cur = cur->next;
 			}
 		}
-		
-		if (matched == 0) {
+		// if not taken, keep picked color	
+		if (taken == 0) {
 			color_found = 1;
 		}
 	}
-
-	add_color(random_color_code);
+	
+	// find new socket, set random color code
+	cur = head;
+	while (cur != NULL) {
+		if (cur->clisockfd == sockfd) {
+			cur->color_code = random_color_code;
+			break;
+		}
+		cur = cur->next;
+	}
 
 	return random_color_code;
 }
@@ -310,7 +266,7 @@ void* thread_main(void* args)
 	char buffer[256];
 	int nsen, nrcv;
 	
-	int color_code = get_color_code();
+	int color_code = get_color_code(clisockfd);
 
 	memset(buffer, 0, 256);
 	nrcv = recv(clisockfd, buffer, 255, 0);
@@ -333,8 +289,6 @@ void* thread_main(void* args)
 	
 	remove_client(clisockfd);
 	
-	remove_color(color_code);
-
 	close(clisockfd);
 	//-------------------------------
 	

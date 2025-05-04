@@ -80,12 +80,15 @@ void* thread_main_send(void* args)
 
 int main(int argc, char *argv[])
 {
-	if (argc < 2) error("Please speicify hostname");
+	if (argc < 2) error("Please specify hostname");
 
 	/* get username from user */
 	char username[MAX_USERNAME_LEN];
 	printf("Type your user name: ");
 	fgets(username, MAX_USERNAME_LEN - 1, stdin);
+	if (username[0] == '\n') {
+		error("Invalid username (Please type a valid username before pressing ENTER.");
+	}
 	username[strlen(username) - 1] = '\0'; // get rid of newline char
 
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -108,6 +111,9 @@ int main(int argc, char *argv[])
 	pthread_t tid2;
 
 	ThreadArgs* args;
+
+	int n = send(sockfd, username, strlen(username), 0);
+	if (n < 0) error("ERROR writing to socket");
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
@@ -116,10 +122,6 @@ int main(int argc, char *argv[])
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
 	pthread_create(&tid1, NULL, thread_main_send, (void*) args);
-
-	int n = send(sockfd, username, strlen(username), 0);
-	if (n < 0) error("ERROR writing to socket");
-
 
 	// parent will wait for sender to finish (= user stop sending message and disconnect from server)
 	pthread_join(tid1, NULL);
