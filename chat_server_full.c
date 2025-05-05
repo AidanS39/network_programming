@@ -19,6 +19,8 @@
 #define BUFFER_SIZE 256
 #define JOINED 1
 #define LEFT 0
+#define SERVER_SHUTDOWN 1
+#define SERVER_RUNNING 0
 
 
 typedef struct _ThreadArgs {
@@ -51,11 +53,11 @@ int sockfd = -1;
 
 // NOTE: I was getting issues with recv errors when shutting down the server
 // I'm going to let the threads close their own sockets
-volatile sig_atomic_t server_shutdown = 0;
+volatile sig_atomic_t server_status = SERVER_RUNNING;
 
 
 
-void graceful_exit(int signo);
+void sigint_handler(int signo);
 void error(const char *msg);
 int create_room();
 void remove_room(int room_number);
@@ -72,32 +74,30 @@ void* thread_main(void* args);
 
 
 /* Clean up memory and exit */
-void graceful_exit(int signo) {
-	printf("Shutting down server...\n");
-	server_shutdown = 1;
+void sigint_handler(int signo) {
+	server_status = SERVER_SHUTDOWN;
 
 	if (sockfd != -1) {
-		printf("Closing server socket\n");
 		close(sockfd);
 	}
 	
-	// close all client connections and free rooms and the clients in the rooms
-	ROOM* cur_room = room_head;
-	while (cur_room != NULL) {
-		printf("Closing room %d\n", cur_room->room_number);
-		USR* cur_usr = cur_room->usr_head;
-		while (cur_usr != NULL) {
-			printf("Disconnecting client %s\n", cur_usr->username);
-			USR* next_usr = cur_usr->next;
-			free(cur_usr);
-			cur_usr = next_usr;
-		}
+	// // close all client connections and free rooms and the clients in the rooms
+	// ROOM* cur_room = room_head;
+	// while (cur_room != NULL) {
+	// 	printf("Closing room %d\n", cur_room->room_number);
+	// 	USR* cur_usr = cur_room->usr_head;
+	// 	while (cur_usr != NULL) {
+	// 		printf("Disconnecting client %s\n", cur_usr->username);
+	// 		USR* next_usr = cur_usr->next;
+	// 		free(cur_usr);
+	// 		cur_usr = next_usr;
+	// 	}
 
-		ROOM* next_room = cur_room->next;
-		free(cur_room);
-		cur_room = next_room;
-	}
-	exit(0);
+	// 	ROOM* next_room = cur_room->next;
+	// 	free(cur_room);
+	// 	cur_room = next_room;
+	// }
+	// exit(0);
 }
 
 
@@ -427,6 +427,8 @@ void* thread_main(void* args)
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
 
+	// TODO: increment semaphore client_count
+
 	// get socket descriptor from argument
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
 	char username[MAX_USERNAME_LEN];
@@ -469,11 +471,11 @@ void* thread_main(void* args)
 
 	memset(buffer, 0, 256);
 
-	if (!server_shutdown) {
+	if (server_status == SERVER_RUNNING) {
 		nrcv = recv(clisockfd, buffer, 255, 0);
 		if (nrcv < 0) error("ERROR recv() failed first recv");
 
-		while (nrcv > 0 && !server_shutdown) {
+		while (nrcv > 0 && server_status == SERVER_RUNNING) {
 			// we send the message to everyone except the sender
 			broadcast(room, clisockfd, username, color_code, buffer);
 
@@ -491,6 +493,7 @@ void* thread_main(void* args)
 
 	remove_client(room, clisockfd);
 
+	// TODO: mutex lock here because other threads might be removing clients concurrently
 	print_client_list(room);
 	
 	close(clisockfd);
@@ -500,6 +503,7 @@ void* thread_main(void* args)
 
 	client = NULL;
 
+	// TODO: decrement semaphore client_count
 	return NULL;
 }
 
@@ -509,7 +513,7 @@ int main(int argc, char *argv[])
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
 
-	signal(SIGINT, graceful_exit);
+	signal(SIGINT, sigint_handler);
 
 	struct sockaddr_in serv_addr;
 	socklen_t slen = sizeof(serv_addr);
@@ -529,14 +533,20 @@ int main(int argc, char *argv[])
 	int offset;
 	int nrcv;
 
-	while(!server_shutdown) {
+	while(server_status == SERVER_RUNNING) {
 		offset = 0;
 		
 		struct sockaddr_in cli_addr;
 		socklen_t clen = sizeof(cli_addr);
+
 		int newsockfd = accept(sockfd, 
 			(struct sockaddr *) &cli_addr, &clen);
-		if (newsockfd < 0) error("ERROR on accept");
+		if (newsockfd < 0 && server_status == SERVER_SHUTDOWN) {
+			printf("Server is shutting down\n");
+			break;
+		} else if (newsockfd < 0) {
+			error("ERROR on accept");
+		}
 		
 		// prepare ThreadArgs structure to pass client socket
 		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
@@ -545,7 +555,7 @@ int main(int argc, char *argv[])
 		// retrieve room_number and username from client
 		memset(buffer, 0, BUFFER_SIZE);
 		nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
-		if (nrcv < 0) error("ERROR recv() failed main function");
+		if (nrcv < 0) error("ERROR recv() failed");
 		
 		/* set thread args */
 		// set room_number
