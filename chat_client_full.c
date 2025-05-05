@@ -14,9 +14,12 @@
 #define MAX_USERNAME_LEN 32
 #define BUFFER_SIZE 256
 
+#define SERVER_SHUTDOWN 1
+#define SERVER_RUNNING 0
+
 // When the server shuts down it will send a last message to the client
 // based of it, we can tell the client to shut down as well
-volatile sig_atomic_t server_shutdown = 0;
+volatile int server_status = SERVER_RUNNING;
 
 void error(const char *msg)
 {
@@ -30,8 +33,6 @@ typedef struct _ThreadArgs {
 
 void* thread_main_recv(void* args)
 {
-	// pthread_detach(pthread_self());
-
 	int sockfd = ((ThreadArgs*) args)->clisockfd;
 	free(args);
 	
@@ -45,25 +46,29 @@ void* thread_main_recv(void* args)
 	n = recv(sockfd, buffer, 512, 0);
 	switch (n) {
 		case -1:
-			error("ERROR recv() failed");
+			if (server_status == SERVER_RUNNING) {
+				error("ERROR recv() failed");
+			}
 			break;
 		case 0: // The server has shutdown	
 			printf("Server disconnected. Press enter to exit.\n");
-			server_shutdown = 1;
+			server_status = SERVER_SHUTDOWN;
 			return NULL;
 		default:
 			printf("\n%s\n", buffer);
 
-			while (n > 0 && !server_shutdown) {
+			while (n > 0 && server_status == SERVER_RUNNING) {
 				memset(buffer, 0, 512);
 				n = recv(sockfd, buffer, 512, 0);
 				switch (n) {
 					case -1:
-						error("ERROR recv() failed");
+						if (server_status == SERVER_RUNNING) {
+							error("ERROR recv() failed");
+						}
 						break;
 					case 0:
 						printf("Server disconnected. Press enter to exit.\n");
-						server_shutdown = 1;
+						server_status = SERVER_SHUTDOWN;
 						return NULL;
 					default:
 						printf("\n%s\n", buffer);
@@ -87,31 +92,32 @@ void* thread_main_send(void* args)
 	char buffer[256];
 	int n;
 
-	while (!server_shutdown) {
+	while (server_status == SERVER_RUNNING) {
 		// You will need a bit of control on your terminal
 		// console or GUI to have a nice input window.
 		//printf("\nPlease enter the message: ");
 		memset(buffer, 0, 256);
 		fgets(buffer, 255, stdin);
 
-		if (server_shutdown) {
-			printf("Server disconnected\n");
-			return NULL;
-		}
-
 		if (strlen(buffer) == 1) buffer[0] = '\0';
 
 		n = send(sockfd, buffer, strlen(buffer), 0);
-		if (n < 0) error("ERROR writing to socket");
+		if (n < 0 && server_status == SERVER_RUNNING) {
+			error("ERROR writing to socket");
+		} else if (n < 0) {
+			printf("Server disconnected\n");
+			break;
+		}
 
 		// Handle user manual disconnect
 		if (n == 0) {
 			printf("User pressed enter to disconnect\n");
-			server_shutdown = 1;
-			return NULL;
+			server_status = SERVER_SHUTDOWN;
+			break;
 		}
 	}
 
+	close(sockfd);
 	return NULL;
 }
 
@@ -162,8 +168,8 @@ int main(int argc, char *argv[])
 			(struct sockaddr *) &serv_addr, slen);
 	if (status < 0) error("ERROR connecting");
 
-	pthread_t tid1;
-	pthread_t tid2;
+	pthread_t tid_recv;
+	pthread_t tid_send;
 
 	ThreadArgs* args;
 	
@@ -182,18 +188,16 @@ int main(int argc, char *argv[])
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
-	pthread_create(&tid2, NULL, thread_main_recv, (void*) args);
+	pthread_create(&tid_recv, NULL, thread_main_recv, (void*) args);
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	args->clisockfd = sockfd;
-	pthread_create(&tid1, NULL, thread_main_send, (void*) args);
+	pthread_create(&tid_send, NULL, thread_main_send, (void*) args);
 
 
 	// NOTE: I'm coordinating the thread exit via a global variable
-	pthread_join(tid1, NULL);
-	pthread_join(tid2, NULL);
-
-	close(sockfd);
+	pthread_join(tid_send, NULL);
+	pthread_join(tid_recv, NULL);
 
 	return 0;
 }

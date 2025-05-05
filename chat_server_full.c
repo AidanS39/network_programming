@@ -17,6 +17,7 @@
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
 #define BUFFER_SIZE 256
+
 #define JOINED 1
 #define LEFT 0
 #define SERVER_SHUTDOWN 1
@@ -475,6 +476,7 @@ void* thread_main(void* args)
 
 	if (server_status == SERVER_RUNNING) {
 		nrcv = recv(clisockfd, buffer, 255, 0);
+		printf("nrcv: %d\n", nrcv);
 		if (nrcv < 0) error("ERROR recv() failed first recv");
 
 		while (nrcv > 0 && server_status == SERVER_RUNNING) {
@@ -483,6 +485,8 @@ void* thread_main(void* args)
 
 			memset(buffer, 0, 256);
 			nrcv = recv(clisockfd, buffer, 255, 0);
+			printf("nrcv: %d\n", nrcv);
+			printf("buffer: %s\n", buffer);
 			if (nrcv < 0) error("ERROR recv() failed in while loop");
 		}
 	}
