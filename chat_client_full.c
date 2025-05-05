@@ -51,7 +51,7 @@ void* thread_main_recv(void* args)
 			}
 			break;
 		case 0: // The server has shutdown	
-			printf("Server disconnected. Press enter to exit.\n");
+			printf("Server disconnected (You may need to press enter to exit).\n");
 			server_status = SERVER_SHUTDOWN;
 			return NULL;
 		default:
@@ -67,7 +67,7 @@ void* thread_main_recv(void* args)
 						}
 						break;
 					case 0:
-						printf("Server disconnected. Press enter to exit.\n");
+						printf("Server disconnected (You may need to press enter to exit).\n");
 						server_status = SERVER_SHUTDOWN;
 						return NULL;
 					default:
@@ -111,7 +111,6 @@ void* thread_main_send(void* args)
 
 		// Handle user manual disconnect
 		if ((n == 1 && buffer[0] == '\n') || n == 0) {
-			printf("User pressed enter to disconnect\n");
 			server_status = SERVER_SHUTDOWN;
 			break;
 		}
