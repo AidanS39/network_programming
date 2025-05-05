@@ -8,21 +8,24 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <time.h>
+#include <signal.h>
+
+
+// FIXME: when entering localhost as ip address, it doesn't work
+// FIXME: sometimes the client just doesn't connect
 
 #define PORT_NUM 1004
-
 #define MAX_USERNAME_LEN 32
 #define BUFFER_SIZE 256
 #define JOINED 1
 #define LEFT 0
 
-int server_stop = 0; // for future use: see main function comments
 
-void error(const char *msg)
-{
-	perror(msg);
-	exit(1);
-}
+typedef struct _ThreadArgs {
+	char username[MAX_USERNAME_LEN];
+	int clisockfd;
+	int room_number;
+} ThreadArgs;
 
 typedef struct _USR {
 	int clisockfd;						// socket file descriptor
@@ -31,9 +34,7 @@ typedef struct _USR {
 	struct _USR* next;					// for linked list queue
 } USR;
 
-USR *head = NULL;
-USR *tail = NULL;
-
+// TODO: add num_clients in room
 typedef struct _ROOM {
 	int room_number;
 	USR* usr_head;
@@ -43,6 +44,73 @@ typedef struct _ROOM {
 
 ROOM* room_head = NULL;
 ROOM* room_tail = NULL;
+
+// NOTE: making it global so I can clean it up in the graceful_exit function
+// Could pass it via sigaction, but this is fine for now
+int sockfd = -1;
+
+// NOTE: I was getting issues with recv errors when shutting down the server
+// I'm going to let the threads close their own sockets
+volatile sig_atomic_t server_shutdown = 0;
+
+
+
+void graceful_exit(int signo);
+void error(const char *msg);
+int create_room();
+void remove_room(int room_number);
+ROOM* find_room(int room_number);
+void add_client(ROOM* room, int newclisockfd, char* username);
+void remove_client(ROOM* room, int sockfd);
+USR* find_client(ROOM* room, int sockfd);
+void print_client_list(ROOM* room);
+void print_room_list();
+int get_color_code(ROOM* room, USR* client);
+void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message);
+void announce_status(ROOM* room, int fromfd, char* username, int status);
+void* thread_main(void* args);
+
+
+/* Clean up memory and exit */
+void graceful_exit(int signo) {
+	printf("Shutting down server...\n");
+	server_shutdown = 1;
+
+	if (sockfd != -1) {
+		printf("Closing server socket\n");
+		close(sockfd);
+	}
+	
+	// close all client connections and free rooms and the clients in the rooms
+	ROOM* cur_room = room_head;
+	while (cur_room != NULL) {
+		printf("Closing room %d\n", cur_room->room_number);
+		USR* cur_usr = cur_room->usr_head;
+		while (cur_usr != NULL) {
+			printf("Disconnecting client %s\n", cur_usr->username);
+			USR* next_usr = cur_usr->next;
+			free(cur_usr);
+			cur_usr = next_usr;
+		}
+
+		ROOM* next_room = cur_room->next;
+		free(cur_room);
+		cur_room = next_room;
+	}
+	exit(0);
+}
+
+
+// TODO: create max rooms and max clients
+// API: char* generate_rooms_summary() -> [Room1: 1people\n,...\0]
+// refactor names to be main_client and main_server
+
+void error(const char *msg)
+{
+	perror(msg);
+	exit(1);
+}
+
 
 int create_room()
 {
@@ -222,6 +290,25 @@ void print_client_list(ROOM* room) {
 	}
 }
 
+void print_room_list() {
+	ROOM* cur_room = room_head;
+	while (cur_room != NULL) {
+		printf("Room %d:\n", cur_room->room_number);
+		cur_room = cur_room->next;
+	}
+}
+
+
+// TODO: handle SIGINT clean up all memory of rooms and clients
+
+// TODO: potential refactor
+// CREATE ROOM
+// MAX_CLIENTS 
+// colors = [0, 0, 0, 0, 0]
+// colors = [91, 92, 93, 94, 95]
+// colors = [93, 91, 92, 94, 95]
+// client->color = colors[client->client_id]
+// client_id increments and decrements on join and leave
 int get_color_code(ROOM* room, USR* client) {
 
 	int random_color_code;
@@ -291,6 +378,8 @@ void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* mes
 	}
 }
 
+// TODO: make status an enum
+// TODO: consider removing client from room before announcing. Save username and ip address and return it from the remove client function
 void announce_status(ROOM* room, int fromfd, char* username, int status)
 {
 	// figure out sender address
@@ -332,11 +421,6 @@ void announce_status(ROOM* room, int fromfd, char* username, int status)
 	}
 }
 
-typedef struct _ThreadArgs {
-	char username[MAX_USERNAME_LEN];
-	int clisockfd;
-	int room_number;
-} ThreadArgs;
 
 void* thread_main(void* args)
 {
@@ -352,11 +436,16 @@ void* thread_main(void* args)
 	// get room node
 	ROOM* room = find_room(room_number);
 	
+	// TODO: it's a little silly to add client then search for it. Have add_client return the client node
+	// TODO: ideally the client creation should set the color code
+
 	// add this new client to the specific client list
 	add_client(room, clisockfd, username);
 	
 	// get client node
 	USR* client = find_client(room, clisockfd);
+	// get color code
+	int color_code = get_color_code(room, client);
 	
 	// get peername (ip & other info) of client socket
 	struct sockaddr_in addr;
@@ -377,23 +466,23 @@ void* thread_main(void* args)
 	// Now, we receive/send messages
 	char buffer[256];
 	int nsen, nrcv;
-	
-	// get color code
-	int color_code = get_color_code(room, client);
 
 	memset(buffer, 0, 256);
-	nrcv = recv(clisockfd, buffer, 255, 0);
-	if (nrcv < 0) error("ERROR recv() failed");
 
-	while (nrcv > 0) {
-		// we send the message to everyone except the sender
-		broadcast(room, clisockfd, username, color_code, buffer);
-
-		memset(buffer, 0, 256);
+	if (!server_shutdown) {
 		nrcv = recv(clisockfd, buffer, 255, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
+		if (nrcv < 0) error("ERROR recv() failed first recv");
+
+		while (nrcv > 0 && !server_shutdown) {
+			// we send the message to everyone except the sender
+			broadcast(room, clisockfd, username, color_code, buffer);
+
+			memset(buffer, 0, 256);
+			nrcv = recv(clisockfd, buffer, 255, 0);
+			if (nrcv < 0) error("ERROR recv() failed in while loop");
+		}
 	}
-	
+
 	// send message to all users that user has left
 	announce_status(room, clisockfd, username, LEFT);
 	
@@ -401,11 +490,11 @@ void* thread_main(void* args)
 	printf("Disconnected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
 
 	remove_client(room, clisockfd);
+
+	print_client_list(room);
 	
 	close(clisockfd);
 	//-------------------------------
-	
-	print_client_list(room);
 	
 	room = NULL;
 
@@ -416,8 +505,11 @@ void* thread_main(void* args)
 
 int main(int argc, char *argv[])
 {
-	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
+
+	signal(SIGINT, graceful_exit);
 
 	struct sockaddr_in serv_addr;
 	socklen_t slen = sizeof(serv_addr);
@@ -437,7 +529,7 @@ int main(int argc, char *argv[])
 	int offset;
 	int nrcv;
 
-	while(!server_stop) {
+	while(!server_shutdown) {
 		offset = 0;
 		
 		struct sockaddr_in cli_addr;
@@ -453,7 +545,7 @@ int main(int argc, char *argv[])
 		// retrieve room_number and username from client
 		memset(buffer, 0, BUFFER_SIZE);
 		nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
+		if (nrcv < 0) error("ERROR recv() failed main function");
 		
 		/* set thread args */
 		// set room_number
