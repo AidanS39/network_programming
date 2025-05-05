@@ -47,14 +47,13 @@ typedef struct _ROOM {
 ROOM* room_head = NULL;
 ROOM* room_tail = NULL;
 
-// NOTE: making it global so I can clean it up in the graceful_exit function
+// NOTE: making it global so I can clean it up in the SIGINT handler
 // Could pass it via sigaction, but this is fine for now
 int sockfd = -1;
 
 // NOTE: I was getting issues with recv errors when shutting down the server
 // I'm going to let the threads close their own sockets
 volatile sig_atomic_t server_status = SERVER_RUNNING;
-
 
 
 void sigint_handler(int signo);
@@ -71,7 +70,7 @@ int get_color_code(ROOM* room, USR* client);
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message);
 void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
-
+void clean_up();
 
 /* Clean up memory and exit */
 void sigint_handler(int signo) {
@@ -81,24 +80,27 @@ void sigint_handler(int signo) {
 		close(sockfd);
 	}
 	
-	// // close all client connections and free rooms and the clients in the rooms
-	// ROOM* cur_room = room_head;
-	// while (cur_room != NULL) {
-	// 	printf("Closing room %d\n", cur_room->room_number);
-	// 	USR* cur_usr = cur_room->usr_head;
-	// 	while (cur_usr != NULL) {
-	// 		printf("Disconnecting client %s\n", cur_usr->username);
-	// 		USR* next_usr = cur_usr->next;
-	// 		free(cur_usr);
-	// 		cur_usr = next_usr;
-	// 	}
-
-	// 	ROOM* next_room = cur_room->next;
-	// 	free(cur_room);
-	// 	cur_room = next_room;
-	// }
-	// exit(0);
 }
+
+void clean_up() {
+	// close all client connections and free rooms and the clients in the rooms
+	ROOM* cur_room = room_head;
+	while (cur_room != NULL) {
+		printf("Closing room %d\n", cur_room->room_number);
+		USR* cur_usr = cur_room->usr_head;
+		while (cur_usr != NULL) {
+			printf("Disconnecting client %s\n", cur_usr->username);
+			USR* next_usr = cur_usr->next;
+			remove_client(cur_room, cur_usr->clisockfd);
+			cur_usr = next_usr;
+		}
+
+		ROOM* next_room = cur_room->next;
+		remove_room(cur_room->room_number);
+		cur_room = next_room;
+	}
+}
+
 
 
 // TODO: create max rooms and max clients
@@ -582,12 +584,9 @@ int main(int argc, char *argv[])
 		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
 			error("ERROR creating a new thread");
 		}
-
-		/** TODO: possibly create a thread for stopping server
-		 *  IDEA - create a thread that would listen for the server to say exit 
-		 *  or something else along those lines...then thread would clean up all
-		 *  resources and then set server_stop to 0, which would end the program. */
 	}
+
+	clean_up();
 
 	return 0; 
 }
