@@ -9,10 +9,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <signal.h>
-
-
-// FIXME: when entering localhost as ip address, it doesn't work
-// FIXME: sometimes the client just doesn't connect
+#include <semaphore.h>
 
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
@@ -56,6 +53,11 @@ int sockfd = -1;
 // I'm going to let the threads close their own sockets
 volatile sig_atomic_t server_status = SERVER_RUNNING;
 
+// Monitor Client Count
+// int client_count;
+// pthread_mutex_t client_count_mutex;
+// pthread_cond_t client_count_cond;
+
 
 void sigint_handler(int signo);
 void error(const char *msg);
@@ -73,14 +75,32 @@ void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
 void clean_up();
 
+// void set_address(int clisockfd, struct sockaddr_in* addr, socklen_t* len);
+
+// void set_address(int clisockfd, struct sockaddr_in* addr, socklen_t* len) {
+// 	if (getpeername(clisockfd, (struct sockaddr*)&addr, len) < 0) {
+// 		error("ERROR Unknown sender!");
+// 	}
+// }
+
+
 /* Clean up memory and exit */
 void sigint_handler(int signo) {
 	server_status = SERVER_SHUTDOWN;
 
+	ROOM* cur_room = room_head;
+	while (cur_room != NULL) {
+		USR* cur_usr = cur_room->usr_head;
+		while (cur_usr != NULL) {
+			shutdown(cur_usr->clisockfd, SHUT_RDWR);
+			cur_usr = cur_usr->next;
+		}
+		cur_room = cur_room->next;
+	}
+
 	if (sockfd != -1) {
 		close(sockfd);
 	}
-	
 }
 
 void clean_up() {
@@ -302,7 +322,6 @@ void print_room_list() {
 }
 
 
-// TODO: handle SIGINT clean up all memory of rooms and clients
 
 // TODO: potential refactor
 // CREATE ROOM
@@ -430,7 +449,13 @@ void* thread_main(void* args)
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
 
-	// TODO: increment semaphore client_count
+	// Update client count
+	// pthread_mutex_lock(&client_count_mutex);
+	// client_count++;
+	// printf("Client count: %d\n", client_count);
+	// pthread_cond_broadcast(&client_count_cond);
+	// pthread_mutex_unlock(&client_count_mutex);
+
 
 	// get socket descriptor from argument
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
@@ -488,6 +513,7 @@ void* thread_main(void* args)
 		}
 	}
 
+
 	// send message to all users that user has left
 	announce_status(room, clisockfd, username, LEFT);
 	
@@ -506,12 +532,27 @@ void* thread_main(void* args)
 
 	client = NULL;
 
-	// TODO: decrement semaphore client_count
+	// Update client count
+	// pthread_mutex_lock(&client_count_mutex);
+	// client_count--;
+	// printf("Client count: %d\n", client_count);
+	// pthread_cond_broadcast(&client_count_cond);
+	// pthread_mutex_unlock(&client_count_mutex);
+
 	return NULL;
 }
 
 int main(int argc, char *argv[])
 {
+	// Setup Monitor Client Count
+	// client_count = 0;
+	// if (pthread_mutex_init(&client_count_mutex, NULL) != 0) {
+	// 	error("Failed to initialize client_count_mutex");
+	// }
+	// if (pthread_cond_init(&client_count_cond, NULL) != 0) {
+	// 	error("Failed to initialize client_count_cond");
+	// }
+
 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
@@ -587,8 +628,14 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	// Wait for all clients to disconnect before freeing up memory
+	// pthread_mutex_lock(&client_count_mutex);
+	// while (client_count > 0) {
+	// 	pthread_cond_wait(&client_count_cond, &client_count_mutex);
+	// }
+	// pthread_mutex_unlock(&client_count_mutex);
+
 	clean_up();
 
 	return 0; 
 }
-
