@@ -24,7 +24,7 @@ volatile int server_status = SERVER_RUNNING;
 void error(const char *msg)
 {
 	perror(msg);
-	exit(0);
+	exit(EXIT_FAILURE);
 }
 
 typedef struct _ThreadArgs {
@@ -99,7 +99,7 @@ void* thread_main_send(void* args)
 		memset(buffer, 0, 256);
 		fgets(buffer, 255, stdin);
 
-		if (strlen(buffer) == 1) buffer[0] = '\0';
+		// if (strlen(buffer) == 1) buffer[0] = '\0';
 
 		n = send(sockfd, buffer, strlen(buffer), 0);
 		if (n < 0 && server_status == SERVER_RUNNING) {
@@ -110,7 +110,7 @@ void* thread_main_send(void* args)
 		}
 
 		// Handle user manual disconnect
-		if (n == 0) {
+		if ((n == 1 && buffer[0] == '\n') || n == 0) {
 			printf("User pressed enter to disconnect\n");
 			server_status = SERVER_SHUTDOWN;
 			break;

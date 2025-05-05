@@ -111,7 +111,7 @@ void clean_up() {
 void error(const char *msg)
 {
 	perror(msg);
-	exit(1);
+	exit(EXIT_FAILURE);
 }
 
 
@@ -478,7 +478,7 @@ void* thread_main(void* args)
 		nrcv = recv(clisockfd, buffer, 255, 0);
 		if (nrcv < 0) error("ERROR recv() failed first recv");
 
-		while (nrcv > 0 && server_status == SERVER_RUNNING) {
+		while (nrcv > 0 && server_status == SERVER_RUNNING && buffer[0] != '\n') {
 			// we send the message to everyone except the sender
 			broadcast(room, clisockfd, username, color_code, buffer);
 
