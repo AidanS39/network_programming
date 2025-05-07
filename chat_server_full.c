@@ -514,13 +514,6 @@ int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* 
 	return 0;
 }
 
-void print_connection_request(ConnectionRequest *cr)
-{
-	printf("Connection request username: %s\n", cr->username);
-	printf("Connection request type: %d\n", cr->type);
-	printf("Connection request room number: %d\n", cr->room_number);
-}
-
 // void initiate_client_handshake(int sockfd, ConnectionRequest* cr) {
 // }
 size_t deserialize_connection_request(unsigned char* buffer, ConnectionRequest *cr) {

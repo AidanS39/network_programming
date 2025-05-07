@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 
+
+
 char* trim_whitespace(char *str);
 void error(const char *msg);
 void print_server_addr(struct sockaddr_in* serv_addr);
