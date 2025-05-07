@@ -11,10 +11,12 @@
 #include <signal.h>
 #include <semaphore.h>
 
+#include "handshake.h"
+
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
 #define BUFFER_SIZE 256
-
+#define BACKLOG 5
 #define JOINED 1
 #define LEFT 0
 #define SERVER_SHUTDOWN 1
@@ -60,6 +62,9 @@ int get_color_code(ROOM* room, USR* client);
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message);
 void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
+
+void initiate_client_handshake(int sockfd, ConnectionRequest* cr);
+
 
 void clean_up();
 
@@ -490,6 +495,69 @@ void* thread_main(void* args)
 	return NULL;
 }
 
+void print_hex(const unsigned char* buf, size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        printf("%02x ", buf[i]);
+    }
+    printf("\n");
+}
+
+int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr) {
+	memset(cc, 0, sizeof(ConnectionConfirmation));
+	switch(cr->type) {
+		case JOIN_ROOM: // client passed in room that they want to join
+			if (find_room(cr->room_number) != NULL) {
+				cc->status = CONFIRMATION_SUCCESS;
+			}
+			else {
+				cc->status = CONFIRMATION_FAILURE;
+			}
+			break;
+		case CREATE_NEW_ROOM: // client wants to create a new room
+			cc->status = CONFIRMATION_SUCCESS;
+			break;
+		case SELECT_ROOM: // client wants to select a room to join
+			cc->status = CONFIRMATION_PENDING;
+			break;
+		default:
+			cc->status = CONFIRMATION_FAILURE;
+			break;
+	}
+	return 0;
+}
+
+void print_connection_request(ConnectionRequest *cr)
+{
+	printf("Connection request username: %s\n", cr->username);
+	printf("Connection request type: %d\n", cr->type);
+	printf("Connection request room number: %d\n", cr->room_number);
+}
+
+// void initiate_client_handshake(int sockfd, ConnectionRequest* cr) {
+// }
+size_t deserialize_connection_request(unsigned char* buffer, ConnectionRequest *cr) {
+	size_t offset = 0;
+
+	// deserialize username
+	memcpy(cr->username, buffer + offset, sizeof(cr->username));
+	offset += sizeof(cr->username);
+
+	// deserialize type
+	int32_t type_net = 0;
+	memcpy(&type_net, buffer + offset, sizeof(type_net));
+	cr->type = (ConnectionRequestType) ntohl(type_net);
+	offset += sizeof(type_net);
+
+	// deserialize room number
+	int32_t room_number_net = 0;
+	memcpy(&room_number_net, buffer + offset, sizeof(room_number_net));
+	cr->room_number = ntohl(room_number_net);
+	offset += sizeof(room_number_net);
+
+	return offset;
+}
+
+
 int main(int argc, char *argv[])
 {
 
@@ -513,7 +581,7 @@ int main(int argc, char *argv[])
 			(struct sockaddr*) &serv_addr, slen);
 	if (status < 0) error("ERROR on binding");
 
-	listen(sockfd, 5); // maximum number of connections = 5
+	listen(sockfd, BACKLOG); // maximum number of connections = 5
 	
 	char buffer[BUFFER_SIZE];
 	int offset;
@@ -536,6 +604,21 @@ int main(int argc, char *argv[])
 		if (args == NULL) error("ERROR creating thread argument");
 		
 		// retrieve room_number and username from client
+		unsigned char handshake_buffer[sizeof(ConnectionRequest)];
+		memset(handshake_buffer, 0, sizeof(handshake_buffer));
+		nrcv = recv(newsockfd, handshake_buffer, sizeof(ConnectionRequest), 0);
+		if (nrcv < 0) error("ERROR recv() failed");
+
+		ConnectionRequest cr;
+		deserialize_connection_request(handshake_buffer, &cr);
+		print_connection_request(&cr);
+
+		// ConnectionConfirmation cc;
+		// init_connection_confirmation(&cc, &cr);
+
+
+
+
 		memset(buffer, 0, BUFFER_SIZE);
 		nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
 		if (nrcv < 0) error("ERROR recv() failed");

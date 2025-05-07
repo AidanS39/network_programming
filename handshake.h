@@ -1,8 +1,15 @@
 #ifndef HANDSHAKE_H
 #define HANDSHAKE_H
+#include <stdint.h>
 
 #define MAX_USERNAME_LEN 32
+#define MAX_ROOMS 32
 
+/* NOTE: packing all my structs so that I don't have to worry about padding when
+ * serializing and deserializing. Using stdint types to ensure the sizes are 
+ * portable across all systems (host and clients).
+ */
+#pragma pack(push, 1)
 typedef enum _ConnectionRequestType {
 	JOIN_ROOM,
 	CREATE_NEW_ROOM,
@@ -12,7 +19,7 @@ typedef enum _ConnectionRequestType {
 typedef struct _ConnectionRequest {
 	char username[MAX_USERNAME_LEN];
 	ConnectionRequestType type;
-	int room_number;
+	int32_t room_number;
 } ConnectionRequest;
 
 typedef enum _ConfirmationStatus {
@@ -22,19 +29,21 @@ typedef enum _ConfirmationStatus {
 } ConfirmationStatus;
 
 typedef struct _HandshakeRoomDescription {
-	int room_number;
-	int num_connected_clients;
+	int32_t room_number;
+	int32_t num_connected_clients;
 } HandshakeRoomDescription;
 
 typedef struct _HandshakeRoomsInfo {
-	int num_rooms;
-	HandshakeRoomDescription* rooms;
+	int32_t num_rooms;
+	HandshakeRoomDescription rooms[MAX_ROOMS];
 } HandshakeRoomsInfo;
 
 typedef struct _ConnectionConfirmation {
 	ConfirmationStatus status;
 	HandshakeRoomsInfo rooms_info;
 } ConnectionConfirmation;
+
+#pragma pack(pop)
 
 #endif
 

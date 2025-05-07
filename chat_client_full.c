@@ -51,14 +51,15 @@ void* thread_main_send(void* args);
 int set_username(ConnectionRequest *cr);
 int init_connection_request(int argc, char *room_arg, ConnectionRequest *cr);
 void print_connection_request(ConnectionRequest *cr);
-int initiate_server_handshake(int sockfd, ConnectionRequest *cr);
-void print_connection_confirmation(ConnectionConfirmation *cr_conf);
+int initiate_server_handshake(int sockfd, unsigned char* handshake_buffer);
+void print_connection_confirmation(ConnectionConfirmation *cc);
 void set_server_addr(int sockfd, char* hostname, struct sockaddr_in* serv_addr);
 ConnectionConfirmation mock_server_connection_confirmation();
 /*================================UTILITIES=========================================*/
 char* trim_whitespace(char *str);
 void error(const char *msg);
 void print_server_addr(struct sockaddr_in* serv_addr);
+void print_hex(const unsigned char* buffer, size_t len);
 
 
 
@@ -98,6 +99,18 @@ char* trim_whitespace(char *str_start) {
 
     return str_start;
 }
+
+void print_hex(const unsigned char* buffer, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		printf("%02X ", buffer[i]);
+	}
+	printf("\n");
+}
+
+
+
+
+
 
 void print_server_addr(struct sockaddr_in* serv_addr) {
 	printf("sin_family: %d\n", serv_addr->sin_family);
@@ -145,6 +158,28 @@ int init_connection_request(int argc, char* room_arg, ConnectionRequest *cr)
 	return 0;
 }
 
+// NOTE: structs are packed already so no padding
+size_t serialize_connection_request(ConnectionRequest *cr, unsigned char* buffer) {
+	size_t offset = 0;
+
+	// serialize username (string is already array of chars so no need to worry about endianness)
+	memcpy(buffer + offset, cr->username, sizeof(cr->username));
+	offset += sizeof(cr->username);
+
+	// serialize type (enum int)
+	int32_t type_net = htonl((int32_t) cr->type);
+	memcpy(buffer + offset, &type_net, sizeof(type_net));
+	offset += sizeof(type_net);
+
+	// serialize room number
+	int32_t room_number_net = htonl(cr->room_number);
+	memcpy(buffer + offset, &room_number_net, sizeof(room_number_net));
+	offset += sizeof(room_number_net);
+
+	return offset;
+}
+
+
 void print_connection_request(ConnectionRequest *cr)
 {
 	printf("Connection request username: %s\n", cr->username);
@@ -154,21 +189,20 @@ void print_connection_request(ConnectionRequest *cr)
 
 ConnectionConfirmation mock_server_connection_confirmation()
 {
-	ConnectionConfirmation cr_conf;
-	cr_conf.status = CONFIRMATION_PENDING;
-	cr_conf.rooms_info.num_rooms = 3;
-	cr_conf.rooms_info.rooms = (HandshakeRoomDescription*) malloc(sizeof(HandshakeRoomDescription) * cr_conf.rooms_info.num_rooms);
+	ConnectionConfirmation cc;
+	cc.status = CONFIRMATION_SUCCESS;
+	cc.rooms_info.num_rooms = 3;
 
-	cr_conf.rooms_info.rooms[0].room_number = 1;
-	cr_conf.rooms_info.rooms[0].num_connected_clients = 5;
+	cc.rooms_info.rooms[0].room_number = 1;
+	cc.rooms_info.rooms[0].num_connected_clients = 5;
 
-	cr_conf.rooms_info.rooms[1].room_number = 2;
-	cr_conf.rooms_info.rooms[1].num_connected_clients = 10;
+	cc.rooms_info.rooms[1].room_number = 2;
+	cc.rooms_info.rooms[1].num_connected_clients = 10;
 
-	cr_conf.rooms_info.rooms[2].room_number = 3;
-	cr_conf.rooms_info.rooms[2].num_connected_clients = 1;
+	cc.rooms_info.rooms[2].room_number = 3;
+	cc.rooms_info.rooms[2].num_connected_clients = 1;
 
-	return cr_conf;
+	return cc;
 }
 
 void* thread_main_recv(void* args)
@@ -282,43 +316,60 @@ void set_server_addr(int sockfd, char* hostname, struct sockaddr_in* serv_addr)
 	serv_addr->sin_port = htons(PORT_NUM);
 }
 
-void print_connection_confirmation(ConnectionConfirmation *cr_conf) {
-	printf("Connection confirmation status: %d\n", cr_conf->status);
-	printf("Connection confirmation num rooms: %d\n", cr_conf->rooms_info.num_rooms);
+void print_connection_confirmation(ConnectionConfirmation *cc) {
+	printf("Connection confirmation status: %d\n", cc->status);
+	printf("Connection confirmation num rooms: %d\n", cc->rooms_info.num_rooms);
 
-	for (int i = 0; i < cr_conf->rooms_info.num_rooms; i++) {
+	for (int i = 0; i < cc->rooms_info.num_rooms; i++) {
 		printf("Room number: %d\tNumber of connected clients: %d\n",
-				cr_conf->rooms_info.rooms[i].room_number,
-				cr_conf->rooms_info.rooms[i].num_connected_clients);
+				cc->rooms_info.rooms[i].room_number,
+				cc->rooms_info.rooms[i].num_connected_clients);
 	}
 }
 
-void print_room_selection_prompt(ConnectionConfirmation *cr_conf) {
+void print_room_selection_prompt(ConnectionConfirmation *cc) {
 	printf("Server says following options are available:\n");
-	for (int i = 0; i < cr_conf->rooms_info.num_rooms; i++) {
+	for (int i = 0; i < cc->rooms_info.num_rooms; i++) {
 		char people_person[7];
-		if (cr_conf->rooms_info.rooms[i].num_connected_clients == 1) {
+		if (cc->rooms_info.rooms[i].num_connected_clients == 1) {
 			strcpy(people_person, "person");
 		} else {
 			strcpy(people_person, "people");
 		}
-		printf("Room %d: %d %s\n", cr_conf->rooms_info.rooms[i].room_number, cr_conf->rooms_info.rooms[i].num_connected_clients, people_person);
+		printf("Room %d: %d %s\n", cc->rooms_info.rooms[i].room_number, cc->rooms_info.rooms[i].num_connected_clients, people_person);
 	}
 	printf("Choose the room number or type [new] to create a new room: ");
 }
 
-int initiate_server_handshake(int sockfd, ConnectionRequest *cr)
+int initiate_server_handshake(int sockfd, unsigned char* handshake_buffer)
 {
-	int n = send(sockfd, cr, sizeof(ConnectionRequest), 0);
+	int n = send(sockfd, handshake_buffer, sizeof(ConnectionRequest), 0);
 	if (n < 0) error("ERROR writing to socket");
 
-	ConnectionConfirmation cr_conf;
-	n = recv(sockfd, &cr_conf, sizeof(ConnectionConfirmation), 0);
-	if (n < 0) error("ERROR reading from socket");
+	// ConnectionConfirmation cc;
+	// n = recv(sockfd, &cc, sizeof(cc), 0);
+	// if (n < 0) error("ERROR reading from socket");
 
-	print_connection_confirmation(&cr_conf);
+	// print_connection_confirmation(&cc);
 
 	return 0;
+}
+
+// given command line arguments, populates a serialized connection request buffer
+void prepare_connection_request(int argc, char* room_arg, unsigned char* buffer) {
+	ConnectionRequest cr;
+	init_connection_request(argc, room_arg, &cr);
+	if (serialize_connection_request(&cr, buffer) != sizeof(ConnectionRequest)) {
+		error("ERROR: Failed to serialize connection request");
+	}
+}
+
+// prints the serialized connection request buffer as a ConnectionRequest struct
+void print_serialized_connection_request(unsigned char* buffer) {
+	printf("Printing serialized connection request...\n");
+	ConnectionRequest cr;
+	memcpy(&cr, buffer, sizeof(ConnectionRequest));
+	print_connection_request(&cr);
 }
 
 
@@ -341,10 +392,11 @@ int main(int argc, char *argv[])
 			"./chat_client <hostname>");
 	}
 
-	// Parse command line arguments and set up initial connection request
-	ConnectionRequest cr;
-	init_connection_request(argc, room_arg, &cr);
-	// print_connection_request(&cr);
+	// Parse command line arguments and set up initial connection request (serialized buffer)
+	unsigned char handshake_buffer[sizeof(ConnectionRequest)];
+	prepare_connection_request(argc, room_arg, handshake_buffer);
+
+	print_serialized_connection_request(handshake_buffer);
 
 
 	/*================================CONNECTION STATUS MONITOR============================*/
@@ -374,7 +426,7 @@ int main(int argc, char *argv[])
 	pthread_t tid_send;
 	ThreadArgs* args; // reuse for both threads
 	
-	initiate_server_handshake(sockfd, &cr);
+	initiate_server_handshake(sockfd, handshake_buffer);
 
 
 	
