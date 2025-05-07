@@ -13,6 +13,7 @@
 
 #define MAX_USERNAME_LEN 32
 #define BUFFER_SIZE 512
+#define EXIT_COMMAND "\n"
 
 typedef enum _ConnectionStatus {
 	CONNECTED,
@@ -41,7 +42,6 @@ void* thread_main_send(void* args);
 
 
 
-
 void error(const char *msg)
 {
 	perror(msg);
@@ -58,7 +58,6 @@ void csm_destroy(ConnectionStatusMonitor* monitor) {
 	pthread_mutex_destroy(&monitor->connection_status_mutex);
 	pthread_cond_destroy(&monitor->connection_status_cond);
 }
-
 
 
 void* thread_main_recv(void* args)
@@ -129,15 +128,15 @@ void* thread_main_send(void* args)
 		memset(buffer, 0, BUFFER_SIZE);
 		fgets(buffer, BUFFER_SIZE - 1, stdin);
 
-		// if (strlen(buffer) == 1) buffer[0] = '\0';
-
 		n = send(sockfd, buffer, strlen(buffer), 0);
 		if (n < 0) {
 			error("ERROR writing to socket");
+		} else if (n == 0 && strlen(buffer) != 0) {
+			error("(probably) ERROR writing to socket");
 		}
 
 		// Handle user manual disconnect
-		if ((n == 1 && buffer[0] == '\n') || n == 0) {
+		if ((strcmp(buffer, EXIT_COMMAND) == 0)) {
 			pthread_mutex_lock(&csm->connection_status_mutex);
 			csm->connection_status = SENT_DISCONNECT_REQUEST;
 			pthread_cond_signal(&csm->connection_status_cond);
