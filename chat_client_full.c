@@ -12,7 +12,7 @@
 #define PORT_NUM 1004
 
 #define MAX_USERNAME_LEN 32
-#define BUFFER_SIZE 256 
+#define BUFFER_SIZE 512
 
 typedef enum _ConnectionStatus {
 	CONNECTED,
@@ -70,12 +70,12 @@ void* thread_main_recv(void* args)
 	free(args);
 	
 	// keep receiving and displaying message from server
-	char buffer[512];
+	char buffer[BUFFER_SIZE];
 	int n;
 
-	memset(buffer, 0, 512);
+	memset(buffer, 0, BUFFER_SIZE);
 
-	n = recv(sockfd, buffer, 512, 0);
+	n = recv(sockfd, buffer, BUFFER_SIZE, 0);
 	switch (n) {
 		case -1:
 			error("ERROR recv() failed");
@@ -90,8 +90,8 @@ void* thread_main_recv(void* args)
 			printf("\n%s\n", buffer);
 
 			while (n > 0) {
-				memset(buffer, 0, 512);
-				n = recv(sockfd, buffer, 512, 0);
+				memset(buffer, 0, BUFFER_SIZE);
+				n = recv(sockfd, buffer, BUFFER_SIZE, 0);
 				switch (n) {
 					case -1:
 						error("ERROR recv() failed");
@@ -119,15 +119,15 @@ void* thread_main_send(void* args)
 	free(args);
 
 	// keep sending messages to the server
-	char buffer[256];
+	char buffer[BUFFER_SIZE];
 	int n;
 
 	while (1) {
 		// You will need a bit of control on your terminal
 		// console or GUI to have a nice input window.
 		//printf("\nPlease enter the message: ");
-		memset(buffer, 0, 256);
-		fgets(buffer, 255, stdin);
+		memset(buffer, 0, BUFFER_SIZE);
+		fgets(buffer, BUFFER_SIZE - 1, stdin);
 
 		// if (strlen(buffer) == 1) buffer[0] = '\0';
 
