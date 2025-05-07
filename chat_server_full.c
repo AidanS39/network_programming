@@ -45,21 +45,8 @@ typedef struct _ROOM {
 ROOM* room_head = NULL;
 ROOM* room_tail = NULL;
 
-// NOTE: making it global so I can clean it up in the SIGINT handler
-// Could pass it via sigaction, but this is fine for now
-int sockfd = -1;
-
-// NOTE: I was getting issues with recv errors when shutting down the server
-// I'm going to let the threads close their own sockets
-volatile sig_atomic_t server_status = SERVER_RUNNING;
-
-// Monitor Client Count
-// int client_count;
-// pthread_mutex_t client_count_mutex;
-// pthread_cond_t client_count_cond;
 
 
-void sigint_handler(int signo);
 void error(const char *msg);
 int create_room();
 void remove_room(int room_number);
@@ -73,35 +60,10 @@ int get_color_code(ROOM* room, USR* client);
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message);
 void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
+
 void clean_up();
 
-// void set_address(int clisockfd, struct sockaddr_in* addr, socklen_t* len);
 
-// void set_address(int clisockfd, struct sockaddr_in* addr, socklen_t* len) {
-// 	if (getpeername(clisockfd, (struct sockaddr*)&addr, len) < 0) {
-// 		error("ERROR Unknown sender!");
-// 	}
-// }
-
-
-/* Clean up memory and exit */
-void sigint_handler(int signo) {
-	server_status = SERVER_SHUTDOWN;
-
-	ROOM* cur_room = room_head;
-	while (cur_room != NULL) {
-		USR* cur_usr = cur_room->usr_head;
-		while (cur_usr != NULL) {
-			shutdown(cur_usr->clisockfd, SHUT_RDWR);
-			cur_usr = cur_usr->next;
-		}
-		cur_room = cur_room->next;
-	}
-
-	if (sockfd != -1) {
-		close(sockfd);
-	}
-}
 
 void clean_up() {
 	// close all client connections and free rooms and the clients in the rooms
@@ -376,7 +338,10 @@ void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* mes
 	// figure out sender address
 	struct sockaddr_in cliaddr;
 	socklen_t clen = sizeof(cliaddr);
-	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0) error("ERROR Unknown sender!");
+	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0){
+		printf("broadcast error\n");
+		error("ERROR Unknown sender!");
+	}
 
 	// traverse through all connected clients in room
 	USR* cur = room->usr_head;
@@ -449,13 +414,6 @@ void* thread_main(void* args)
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
 
-	// Update client count
-	// pthread_mutex_lock(&client_count_mutex);
-	// client_count++;
-	// printf("Client count: %d\n", client_count);
-	// pthread_cond_broadcast(&client_count_cond);
-	// pthread_mutex_unlock(&client_count_mutex);
-
 
 	// get socket descriptor from argument
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
@@ -481,6 +439,7 @@ void* thread_main(void* args)
 	struct sockaddr_in addr;
 	socklen_t len = sizeof(addr);
 	if (getpeername(clisockfd, (struct sockaddr*)&addr, &len) < 0) {
+		printf("thread main top error\n");
 		error("ERROR Unknown sender!");
 	}
 
@@ -499,18 +458,16 @@ void* thread_main(void* args)
 
 	memset(buffer, 0, 256);
 
-	if (server_status == SERVER_RUNNING) {
 		nrcv = recv(clisockfd, buffer, 255, 0);
 		if (nrcv < 0) error("ERROR recv() failed first recv");
 
-		while (nrcv > 0 && server_status == SERVER_RUNNING && buffer[0] != '\n') {
-			// we send the message to everyone except the sender
-			broadcast(room, clisockfd, username, color_code, buffer);
+	while (nrcv > 0 && buffer[0] != '\n') {
+		// we send the message to everyone except the sender
+		broadcast(room, clisockfd, username, color_code, buffer);
 
 			memset(buffer, 0, 256);
 			nrcv = recv(clisockfd, buffer, 255, 0);
 			if (nrcv < 0) error("ERROR recv() failed in while loop");
-		}
 	}
 
 
@@ -522,42 +479,27 @@ void* thread_main(void* args)
 
 	remove_client(room, clisockfd);
 
-	// TODO: mutex lock here because other threads might be removing clients concurrently
 	print_client_list(room);
 	
 	close(clisockfd);
-	//-------------------------------
 	
 	room = NULL;
 
 	client = NULL;
-
-	// Update client count
-	// pthread_mutex_lock(&client_count_mutex);
-	// client_count--;
-	// printf("Client count: %d\n", client_count);
-	// pthread_cond_broadcast(&client_count_cond);
-	// pthread_mutex_unlock(&client_count_mutex);
 
 	return NULL;
 }
 
 int main(int argc, char *argv[])
 {
-	// Setup Monitor Client Count
-	// client_count = 0;
-	// if (pthread_mutex_init(&client_count_mutex, NULL) != 0) {
-	// 	error("Failed to initialize client_count_mutex");
-	// }
-	// if (pthread_cond_init(&client_count_cond, NULL) != 0) {
-	// 	error("Failed to initialize client_count_cond");
-	// }
 
-
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
 
-	signal(SIGINT, sigint_handler);
+	// avoid "Address already in use" error
+	// https://beej.us/guide/bgnet/html/split/system-calls-or-bust.html
+	int yes = 1;
+	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 
 	struct sockaddr_in serv_addr;
 	socklen_t slen = sizeof(serv_addr);
@@ -577,7 +519,7 @@ int main(int argc, char *argv[])
 	int offset;
 	int nrcv;
 
-	while(server_status == SERVER_RUNNING) {
+	while(1) {
 		offset = 0;
 		
 		struct sockaddr_in cli_addr;
@@ -585,10 +527,7 @@ int main(int argc, char *argv[])
 
 		int newsockfd = accept(sockfd, 
 			(struct sockaddr *) &cli_addr, &clen);
-		if (newsockfd < 0 && server_status == SERVER_SHUTDOWN) {
-			printf("Server is shutting down\n");
-			break;
-		} else if (newsockfd < 0) {
+		if (newsockfd < 0) {
 			error("ERROR on accept");
 		}
 		
@@ -628,14 +567,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	// Wait for all clients to disconnect before freeing up memory
-	// pthread_mutex_lock(&client_count_mutex);
-	// while (client_count > 0) {
-	// 	pthread_cond_wait(&client_count_cond, &client_count_mutex);
-	// }
-	// pthread_mutex_unlock(&client_count_mutex);
-
-	clean_up();
+	close(sockfd);
 
 	return 0; 
 }
