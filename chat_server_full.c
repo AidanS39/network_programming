@@ -12,6 +12,7 @@
 #include <semaphore.h>
 
 #include "handshake.h"
+#include "util.h"
 
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
@@ -49,7 +50,6 @@ ROOM* room_tail = NULL;
 
 
 
-void error(const char *msg);
 int create_room();
 void remove_room(int room_number);
 ROOM* find_room(int room_number);
@@ -94,12 +94,6 @@ void clean_up() {
 // TODO: create max rooms and max clients
 // API: char* generate_rooms_summary() -> [Room1: 1people\n,...\0]
 // refactor names to be main_client and main_server
-
-void error(const char *msg)
-{
-	perror(msg);
-	exit(EXIT_FAILURE);
-}
 
 
 int create_room()
@@ -495,12 +489,6 @@ void* thread_main(void* args)
 	return NULL;
 }
 
-void print_hex(const unsigned char* buf, size_t len) {
-    for (size_t i = 0; i < len; ++i) {
-        printf("%02x ", buf[i]);
-    }
-    printf("\n");
-}
 
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr) {
 	memset(cc, 0, sizeof(ConnectionConfirmation));
