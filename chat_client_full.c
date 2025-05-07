@@ -12,7 +12,7 @@
 #define PORT_NUM 1004
 
 #define MAX_USERNAME_LEN 32
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 256 
 
 typedef enum _ConnectionStatus {
 	CONNECTED,
@@ -33,13 +33,20 @@ typedef struct _ThreadArgs {
 } ThreadArgs;
 
 
+void error(const char *msg);
+void csm_init(ConnectionStatusMonitor* monitor);
+void csm_destroy(ConnectionStatusMonitor* monitor);
+void* thread_main_recv(void* args);
+void* thread_main_send(void* args);
+
+
+
+
 void error(const char *msg)
 {
 	perror(msg);
 	exit(EXIT_FAILURE);
 }
-
-
 
 void csm_init(ConnectionStatusMonitor* monitor) {
 	monitor->connection_status = CONNECTED;
@@ -78,7 +85,6 @@ void* thread_main_recv(void* args)
 			csm->connection_status = RECEIVED_DISCONNECT_CONFIRMATION;
 			pthread_cond_signal(&csm->connection_status_cond);
 			pthread_mutex_unlock(&csm->connection_status_mutex);
-			printf("You have been disconnected from the server.\n");
 			break;
 		default:
 			printf("\n%s\n", buffer);
@@ -95,16 +101,12 @@ void* thread_main_recv(void* args)
 						csm->connection_status = RECEIVED_DISCONNECT_CONFIRMATION;
 						pthread_cond_signal(&csm->connection_status_cond);
 						pthread_mutex_unlock(&csm->connection_status_mutex);
-						printf("You have been disconnected from the server.\n");
 						break;
 					default:
 						printf("\n%s\n", buffer);
 				}
 			}
 	}
-
-	printf("thread_main_recv exiting\n");
-
 	return NULL;
 }
 
@@ -137,16 +139,12 @@ void* thread_main_send(void* args)
 		// Handle user manual disconnect
 		if ((n == 1 && buffer[0] == '\n') || n == 0) {
 			pthread_mutex_lock(&csm->connection_status_mutex);
-			printf("Sending disconnect request to server.\n");
 			csm->connection_status = SENT_DISCONNECT_REQUEST;
 			pthread_cond_signal(&csm->connection_status_cond);
 			pthread_mutex_unlock(&csm->connection_status_mutex);
 			break;
 		}
 	}
-
-	printf("thread_main_send exiting\n");
-
 	return NULL;
 }
 
@@ -240,7 +238,8 @@ int main(int argc, char *argv[])
 	pthread_mutex_unlock(&csm.connection_status_mutex);
 
 	close(sockfd);
-	printf("main thread exiting\n");
+
+	csm_destroy(&csm);
 
 	return 0;
 }
