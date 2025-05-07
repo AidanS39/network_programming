@@ -13,7 +13,6 @@
 #define EXIT_COMMAND "\n"
 
 
-
 typedef struct _ThreadArgs {
 	int clisockfd;
 	ConnectionStatusMonitor* csm;
@@ -22,7 +21,6 @@ typedef struct _ThreadArgs {
 
 void* thread_main_recv(void* args);
 void* thread_main_send(void* args);
-
 
 
 void* thread_main_recv(void* args)
@@ -138,8 +136,6 @@ int main(int argc, char *argv[])
 	unsigned char handshake_buffer[sizeof(ConnectionRequest)];
 	prepare_connection_request(argc, room_arg, handshake_buffer);
 
-	print_serialized_connection_request(handshake_buffer);
-
 
 	/*================================CONNECTION STATUS MONITOR============================*/
 	// Initialize connection status monitor
@@ -168,6 +164,7 @@ int main(int argc, char *argv[])
 	pthread_t tid_send;
 	ThreadArgs* args; // reuse for both threads
 	
+	// TODO: loop until handshake is successful
 	initiate_server_handshake(sockfd, handshake_buffer);
 
 
@@ -185,6 +182,7 @@ int main(int argc, char *argv[])
 
 	// // NOTE: I'm pretty sure you can't/shouldn't join a detached thread
 	// // pthread_join(tid_send, NULL);
+
 	// pthread_mutex_lock(&csm.connection_status_mutex);
 	// while (csm.connection_status != RECEIVED_DISCONNECT_CONFIRMATION) {
 	// 	pthread_cond_wait(&csm.connection_status_cond, &csm.connection_status_mutex);

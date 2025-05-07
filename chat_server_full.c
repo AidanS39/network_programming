@@ -23,6 +23,17 @@
 #define SERVER_SHUTDOWN 1
 #define SERVER_RUNNING 0
 
+// TODO: implement MAX_CLIENTS
+
+// Question do we want to add ROOM list here and create function to list available rooms, etc
+typedef struct _ServerState {
+	int num_rooms;
+	pthread_mutex_t server_state_mutex;
+} ServerState;
+
+ServerState server_state;
+
+
 
 typedef struct _ThreadArgs {
 	char username[MAX_USERNAME_LEN];
@@ -37,9 +48,9 @@ typedef struct _USR {
 	struct _USR* next;					// for linked list queue
 } USR;
 
-// TODO: add num_clients in room
 typedef struct _ROOM {
 	int room_number;
+	int num_connected_clients;
 	USR* usr_head;
 	USR* usr_tail;
 	struct _ROOM* next;
@@ -50,7 +61,7 @@ ROOM* room_tail = NULL;
 
 
 
-int create_room();
+ROOM* create_room();
 void remove_room(int room_number);
 ROOM* find_room(int room_number);
 void add_client(ROOM* room, int newclisockfd, char* username);
@@ -64,10 +75,21 @@ void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
 
 void initiate_client_handshake(int sockfd, ConnectionRequest* cr);
+int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 
+
+int cc_set_available_rooms(ConnectionConfirmation* cc);
+
+
+void init_server_state();
 
 void clean_up();
 
+
+void init_server_state() {
+	pthread_mutex_init(&server_state.server_state_mutex, NULL);
+	server_state.num_rooms = 0;
+}
 
 
 void clean_up() {
@@ -90,31 +112,31 @@ void clean_up() {
 }
 
 
-
-// TODO: create max rooms and max clients
-// API: char* generate_rooms_summary() -> [Room1: 1people\n,...\0]
-// refactor names to be main_client and main_server
-
-
-int create_room()
+ROOM* create_room()
 {
-	if (room_head == NULL) {
+	if (room_head == NULL) { // No rooms exist yet
 		room_head = (ROOM*) malloc(sizeof(ROOM));
 		room_head->room_number = 1;
+		room_head->num_connected_clients = 0;
 		room_head->usr_head = NULL;
 		room_head->usr_tail = NULL;
 		room_head->next = NULL;
 		room_tail = room_head;
-	} else {
+	} else { // At least one room exists
 		room_tail->next = (ROOM*) malloc(sizeof(ROOM));
 		room_tail->next->room_number = room_tail->room_number + 1;
+		room_tail->next->num_connected_clients = 0;
 		room_tail->next->usr_head = NULL;
 		room_tail->next->usr_tail = NULL;
 		room_tail->next->next = NULL;
 		room_tail = room_tail->next;
 	}
 
-	return room_tail->room_number;
+	pthread_mutex_lock(&server_state.server_state_mutex);
+	server_state.num_rooms++;
+	pthread_mutex_unlock(&server_state.server_state_mutex);
+
+	return room_tail;
 }
 
 void remove_room(int room_number) {
@@ -132,32 +154,37 @@ void remove_room(int room_number) {
 		}
 	}
 
+	// TODO: proper error handling
+	assert(cur != NULL);
+
 	/* remove room from room list */
 	// if room is head of list
 	if (cur == room_head) {
 		if (room_head == room_tail) {
 			room_head = NULL;
 			room_tail = NULL;
-			free(cur);
 		}
 		else {
 			room_head = cur->next;
 			cur->next = NULL;
-			free(cur);
 		}
 	}
 	// if room is tail of list
 	else if (cur == room_tail) {
 		prev->next = NULL;
 		room_tail = prev;
-		free(cur);
 	}
 	// if room is neither head or tail of list
 	else {
 		prev->next = cur->next;
 		cur->next = NULL;
-		free(cur);
 	}
+
+	free(cur);
+
+	pthread_mutex_lock(&server_state.server_state_mutex);
+	server_state.num_rooms--;
+	pthread_mutex_unlock(&server_state.server_state_mutex);
 }
 
 ROOM* find_room(int room_number) {
@@ -196,6 +223,7 @@ void add_client(ROOM* room, int newclisockfd, char* username)
 		room->usr_tail->next->next = NULL;
 		room->usr_tail = room->usr_tail->next;
 	}
+	room->num_connected_clients++;
 }
 
 void remove_client(ROOM* room, int sockfd) {
@@ -214,32 +242,34 @@ void remove_client(ROOM* room, int sockfd) {
 		}
 	}
 
+	// TODO: proper error handling
+	assert(cur != NULL);
+
 	/* remove client from client list */
 	// if client is head of list
 	if (cur == room->usr_head) {
 		if (room->usr_head == room->usr_tail) {
 			room->usr_head = NULL;
 			room->usr_tail = NULL;
-			free(cur);
 		}
 		else {
 			room->usr_head = cur->next;
 			cur->next = NULL;
-			free(cur);
 		}
 	}
 	// if client is tail of list
 	else if (cur == room->usr_tail) {
 		prev->next = NULL;
 		room->usr_tail = prev;
-		free(cur);
 	}
 	// if client is neither head or tail of list
 	else {
 		prev->next = cur->next;
 		cur->next = NULL;
-		free(cur);
 	}
+
+	free(cur);
+	room->num_connected_clients--;
 }
 
 USR* find_client(ROOM* room, int sockfd) {
@@ -489,59 +519,76 @@ void* thread_main(void* args)
 	return NULL;
 }
 
+int cc_set_available_rooms(ConnectionConfirmation* cc) {
+	ROOM* cur_room = room_head;
+	int i = 0;
+	while (cur_room != NULL) {
+		cc->available_rooms.rooms[i].room_number = cur_room->room_number;
+		cc->available_rooms.rooms[i].num_connected_clients = cur_room->num_connected_clients;
+		i++;
+		cur_room = cur_room->next;
+	}
+	cc->available_rooms.num_rooms = i;
+	return 0;
+}
 
-int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr) {
+
+int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
 	memset(cc, 0, sizeof(ConnectionConfirmation));
 	switch(cr->type) {
 		case JOIN_ROOM: // client passed in room that they want to join
-			if (find_room(cr->room_number) != NULL) {
+			ROOM* requested_room = find_room(cr->room_number);
+			if (requested_room != NULL) {
+				// prepare confirmation packet
 				cc->status = CONFIRMATION_SUCCESS;
+				cc->connected_room.room_number = cr->room_number;
+				cc->connected_room.num_connected_clients = requested_room->num_connected_clients;
+
+				add_client(requested_room, clisockfd, cr->username);
 			}
 			else {
 				cc->status = CONFIRMATION_FAILURE;
+				cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
+				cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
 			}
 			break;
 		case CREATE_NEW_ROOM: // client wants to create a new room
 			cc->status = CONFIRMATION_SUCCESS;
+			ROOM* new_room = create_room();
+			add_client(new_room, clisockfd, cr->username);
+			cc->connected_room.room_number = new_room->room_number;
+			cc->connected_room.num_connected_clients = new_room->num_connected_clients;
 			break;
 		case SELECT_ROOM: // client wants to select a room to join
+			// TODO: would be good to lock server_state but create_room is locking server state so deadlock
+			// need to create different locks can't have one lock for monolithic server state
+			if (server_state.num_rooms == 0) {
+				cc->status = CONFIRMATION_SUCCESS;
+				ROOM* new_room = create_room();
+				add_client(new_room, clisockfd, cr->username);
+				cc->connected_room.room_number = new_room->room_number;
+				cc->connected_room.num_connected_clients = new_room->num_connected_clients;
+				cc_set_available_rooms(cc);
+				break;
+			}
+
 			cc->status = CONFIRMATION_PENDING;
+			cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
+			cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
 			break;
 		default:
 			cc->status = CONFIRMATION_FAILURE;
 			break;
 	}
+	print_connection_confirmation(cc);
 	return 0;
 }
 
-// void initiate_client_handshake(int sockfd, ConnectionRequest* cr) {
-// }
-size_t deserialize_connection_request(unsigned char* buffer, ConnectionRequest *cr) {
-	size_t offset = 0;
-
-	// deserialize username
-	memcpy(cr->username, buffer + offset, sizeof(cr->username));
-	offset += sizeof(cr->username);
-
-	// deserialize type
-	int32_t type_net = 0;
-	memcpy(&type_net, buffer + offset, sizeof(type_net));
-	cr->type = (ConnectionRequestType) ntohl(type_net);
-	offset += sizeof(type_net);
-
-	// deserialize room number
-	int32_t room_number_net = 0;
-	memcpy(&room_number_net, buffer + offset, sizeof(room_number_net));
-	cr->room_number = ntohl(room_number_net);
-	offset += sizeof(room_number_net);
-
-	return offset;
-}
 
 
 int main(int argc, char *argv[])
 {
-
+	init_server_state();
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0) error("ERROR opening socket");
 
@@ -594,41 +641,32 @@ int main(int argc, char *argv[])
 		deserialize_connection_request(handshake_buffer, &cr);
 		print_connection_request(&cr);
 
-		// ConnectionConfirmation cc;
-		// init_connection_confirmation(&cc, &cr);
+		// TODO: send to separate thread
+		ConnectionConfirmation cc;
+		init_connection_confirmation(&cc, &cr, newsockfd);
 
 
-
-
-		memset(buffer, 0, BUFFER_SIZE);
-		nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
+		// memset(buffer, 0, BUFFER_SIZE);
+		// nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
+		// if (nrcv < 0) error("ERROR recv() failed");
 		
-		/* set thread args */
-		// set room_number
-		args->room_number = ntohl(*(int *)(buffer));
-		offset += sizeof(int);
+		// /* set thread args */
+		// // set room_number
+		// args->room_number = ntohl(*(int *)(buffer));
+		// offset += sizeof(int);
 		
 	
-		// set username
-		strncpy(args->username, (buffer + offset), MAX_USERNAME_LEN);
-		offset += strlen(args->username);
+		// // set username
+		// strncpy(args->username, (buffer + offset), MAX_USERNAME_LEN);
+		// offset += strlen(args->username);
 		
-		// set socket file descriptor
-		args->clisockfd = newsockfd;
-		
-		// if room number = -1, then create new room and assign new room number
-		if (args->room_number == -1) {
-			args->room_number = create_room();
-		}
-		else if (find_room(args->room_number) == NULL) {
-			error("Invalid room number");
-		}
+		// // set socket file descriptor
+		// args->clisockfd = newsockfd;
 
-		pthread_t tid;
-		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
-			error("ERROR creating a new thread");
-		}
+		// pthread_t tid;
+		// if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
+		// 	error("ERROR creating a new thread");
+		// }
 	}
 
 	close(sockfd);

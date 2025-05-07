@@ -9,8 +9,9 @@
 #include "util.h"
 
 #define MAX_USERNAME_LEN 32
-#define MAX_ROOMS 32
+#define MAX_ROOMS 8
 #define UNINITIALIZED_ROOM_NUMBER -1
+#define UNINITIALIZED_NUM_CONNECTED_CLIENTS -1
 #define CREATE_NEW_ROOM_COMMAND "new"
 
 /* NOTE: packing all my structs so that I don't have to worry about padding when
@@ -36,21 +37,24 @@ typedef enum _ConfirmationStatus {
 	CONFIRMATION_FAILURE
 } ConfirmationStatus;
 
+// information regarding a single room on the server
 typedef struct _HandshakeRoomDescription {
 	int32_t room_number;
 	int32_t num_connected_clients;
 } HandshakeRoomDescription;
 
-typedef struct _HandshakeRoomsInfo {
+// information regarding all rooms on the server so the client can select a room to join
+typedef struct _HandshakeAvailableRooms {
 	int32_t num_rooms;
 	HandshakeRoomDescription rooms[MAX_ROOMS];
-} HandshakeRoomsInfo;
+} HandshakeAvailableRooms;
 
 typedef struct _ConnectionConfirmation {
 	ConfirmationStatus status;
-	HandshakeRoomsInfo rooms_info;
+	HandshakeRoomDescription connected_room; // if the client successfully joined a room
+	HandshakeAvailableRooms available_rooms; // for selecting a room to join
 } ConnectionConfirmation;
-
+#pragma pack(pop)
 
 
 int set_username(ConnectionRequest *cr);
@@ -62,9 +66,9 @@ ConnectionConfirmation mock_server_connection_confirmation();
 void prepare_connection_request(int argc, char* room_arg, unsigned char* buffer);
 void print_serialized_connection_request(unsigned char* buffer);
 void print_room_selection_prompt(ConnectionConfirmation *cc);
+
 size_t serialize_connection_request(ConnectionRequest *cr, unsigned char* buffer);
 size_t deserialize_connection_request(unsigned char* buffer, ConnectionRequest *cr);
-#pragma pack(pop)
 
 #endif
 

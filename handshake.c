@@ -30,6 +30,7 @@ int init_connection_request(int argc, char* room_arg, ConnectionRequest *cr)
 
 // NOTE: structs are packed already so no padding
 size_t serialize_connection_request(ConnectionRequest *cr, unsigned char* buffer) {
+	memset(buffer, 0, sizeof(ConnectionRequest));
 	size_t offset = 0;
 
 	// serialize username (string is already array of chars so no need to worry about endianness)
@@ -61,16 +62,16 @@ ConnectionConfirmation mock_server_connection_confirmation()
 {
 	ConnectionConfirmation cc;
 	cc.status = CONFIRMATION_SUCCESS;
-	cc.rooms_info.num_rooms = 3;
+	cc.connected_room.num_connected_clients = 3;
 
-	cc.rooms_info.rooms[0].room_number = 1;
-	cc.rooms_info.rooms[0].num_connected_clients = 5;
+	cc.available_rooms.rooms[0].room_number = 1;
+	cc.available_rooms.rooms[0].num_connected_clients = 5;
 
-	cc.rooms_info.rooms[1].room_number = 2;
-	cc.rooms_info.rooms[1].num_connected_clients = 10;
+	cc.available_rooms.rooms[1].room_number = 2;
+	cc.available_rooms.rooms[1].num_connected_clients = 10;
 
-	cc.rooms_info.rooms[2].room_number = 3;
-	cc.rooms_info.rooms[2].num_connected_clients = 1;
+	cc.available_rooms.rooms[2].room_number = 3;
+	cc.available_rooms.rooms[2].num_connected_clients = 1;
 
 	return cc;
 }
@@ -79,7 +80,7 @@ int set_username(ConnectionRequest *cr)
 {
 	printf("Type your username: ");
 	char username[MAX_USERNAME_LEN];
-	if (fgets(username, MAX_USERNAME_LEN - 1, stdin)) {
+	if (fgets(username, MAX_USERNAME_LEN - 1, stdin) != NULL) {
 		char *trimmed_username = trim_whitespace(username);
 		// I have to copy the trimmed username to the struct because trim_whitespace() returns a char*
 		// and the ConnectionRequest struct expects a char[MAX_USERNAME_LEN]
@@ -92,25 +93,25 @@ int set_username(ConnectionRequest *cr)
 
 void print_connection_confirmation(ConnectionConfirmation *cc) {
 	printf("Connection confirmation status: %d\n", cc->status);
-	printf("Connection confirmation num rooms: %d\n", cc->rooms_info.num_rooms);
+	printf("Connection confirmation num available rooms: %d\n", cc->available_rooms.num_rooms);
 
-	for (int i = 0; i < cc->rooms_info.num_rooms; i++) {
+	for (int i = 0; i < cc->available_rooms.num_rooms; i++) {
 		printf("Room number: %d\tNumber of connected clients: %d\n",
-				cc->rooms_info.rooms[i].room_number,
-				cc->rooms_info.rooms[i].num_connected_clients);
+				cc->available_rooms.rooms[i].room_number,
+				cc->available_rooms.rooms[i].num_connected_clients);
 	}
 }
 
 void print_room_selection_prompt(ConnectionConfirmation *cc) {
 	printf("Server says following options are available:\n");
-	for (int i = 0; i < cc->rooms_info.num_rooms; i++) {
+	for (int i = 0; i < cc->available_rooms.num_rooms; i++) {
 		char people_person[7];
-		if (cc->rooms_info.rooms[i].num_connected_clients == 1) {
+		if (cc->available_rooms.rooms[i].num_connected_clients == 1) {
 			strcpy(people_person, "person");
 		} else {
 			strcpy(people_person, "people");
 		}
-		printf("Room %d: %d %s\n", cc->rooms_info.rooms[i].room_number, cc->rooms_info.rooms[i].num_connected_clients, people_person);
+		printf("Room %d: %d %s\n", cc->available_rooms.rooms[i].room_number, cc->available_rooms.rooms[i].num_connected_clients, people_person);
 	}
 	printf("Choose the room number or type [new] to create a new room: ");
 }
@@ -144,4 +145,26 @@ void print_serialized_connection_request(unsigned char* buffer) {
 	ConnectionRequest cr;
 	memcpy(&cr, buffer, sizeof(ConnectionRequest));
 	print_connection_request(&cr);
+}
+
+size_t deserialize_connection_request(unsigned char* buffer, ConnectionRequest *cr) {
+	size_t offset = 0;
+
+	// deserialize username
+	memcpy(cr->username, buffer + offset, sizeof(cr->username));
+	offset += sizeof(cr->username);
+
+	// deserialize type
+	int32_t type_net = 0;
+	memcpy(&type_net, buffer + offset, sizeof(type_net));
+	cr->type = (ConnectionRequestType) ntohl(type_net);
+	offset += sizeof(type_net);
+
+	// deserialize room number
+	int32_t room_number_net = 0;
+	memcpy(&room_number_net, buffer + offset, sizeof(room_number_net));
+	cr->room_number = ntohl(room_number_net);
+	offset += sizeof(room_number_net);
+
+	return offset;
 }
