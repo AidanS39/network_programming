@@ -36,6 +36,7 @@ ServerState server_state;
 
 
 typedef struct _ThreadArgs {
+	ConfirmationStatus status;
 	char username[MAX_USERNAME_LEN];
 	int clisockfd;
 	int room_number;
@@ -395,7 +396,7 @@ void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* mes
 
 			// send!
 			int nsen = send(cur->clisockfd, buffer, nmsg, 0);
-			if (nsen != nmsg) error("ERROR send() failed");
+			if (nsen != nmsg) error("ERROR send() on broadcast failed");
 		}
 
 		cur = cur->next;
@@ -438,7 +439,7 @@ void announce_status(ROOM* room, int fromfd, char* username, int status)
 
 			// send!
 			int nsen = send(cur->clisockfd, buffer, nmsg, 0);
-			if (nsen != nmsg) error("ERROR send() failed");
+			if (nsen != nmsg) error("ERROR send() on announce_status failed");
 		}
 
 		cur = cur->next;
@@ -446,86 +447,6 @@ void announce_status(ROOM* room, int fromfd, char* username, int status)
 }
 
 
-void* thread_main(void* args)
-{
-	// make sure thread resources are deallocated upon return
-	pthread_detach(pthread_self());
-
-
-	// get socket descriptor from argument
-	int clisockfd = ((ThreadArgs*) args)->clisockfd;
-	char username[MAX_USERNAME_LEN];
-	strncpy(username, ((ThreadArgs*) args)->username, MAX_USERNAME_LEN);
-	int room_number = ((ThreadArgs*) args)->room_number;
-	free(args);
-	// get room node
-	ROOM* room = find_room(room_number);
-	
-	// TODO: it's a little silly to add client then search for it. Have add_client return the client node
-	// TODO: ideally the client creation should set the color code
-
-	// add this new client to the specific client list
-	add_client(room, clisockfd, username);
-	
-	// get client node
-	USR* client = find_client(room, clisockfd);
-	// get color code
-	int color_code = get_color_code(room, client);
-	
-	// get peername (ip & other info) of client socket
-	struct sockaddr_in addr;
-	socklen_t len = sizeof(addr);
-	if (getpeername(clisockfd, (struct sockaddr*)&addr, &len) < 0) {
-		printf("thread main top error\n");
-		error("ERROR Unknown sender!");
-	}
-
-	// print log in server that user has connected
-	printf("Connected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
-	
-	// print the updated list of clients
-	// print_client_list(room);
-	
-	// announce to room that client joined
-	announce_status(room, clisockfd, username, JOINED);
-	//-------------------------------
-	// Now, we receive/send messages
-	char buffer[256];
-	int nsen, nrcv;
-
-	memset(buffer, 0, 256);
-
-		nrcv = recv(clisockfd, buffer, 255, 0);
-		if (nrcv < 0) error("ERROR recv() failed first recv");
-
-	while (nrcv > 0 && buffer[0] != '\n') {
-		// we send the message to everyone except the sender
-		broadcast(room, clisockfd, username, color_code, buffer);
-
-			memset(buffer, 0, 256);
-			nrcv = recv(clisockfd, buffer, 255, 0);
-			if (nrcv < 0) error("ERROR recv() failed in while loop");
-	}
-
-
-	// send message to all users that user has left
-	announce_status(room, clisockfd, username, LEFT);
-	
-	// print log in server that user has disconnected
-	printf("Disconnected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
-
-	remove_client(room, clisockfd);
-
-	print_client_list(room);
-	
-	close(clisockfd);
-	
-	room = NULL;
-
-	client = NULL;
-
-	return NULL;
-}
 
 int cc_set_available_rooms(ConnectionConfirmation* cc) {
 	ROOM* cur_room = room_head;
@@ -650,6 +571,123 @@ void print_rooms_with_clients() {
 
 
 
+void* thread_main(void* args)
+{
+	// make sure thread resources are deallocated upon return
+	pthread_detach(pthread_self());
+
+
+	// get socket descriptor from argument
+	ConfirmationStatus status = ((ThreadArgs*) args)->status;
+	int clisockfd = ((ThreadArgs*) args)->clisockfd;
+	char username[MAX_USERNAME_LEN];
+	strncpy(username, ((ThreadArgs*) args)->username, MAX_USERNAME_LEN);
+	int room_number = ((ThreadArgs*) args)->room_number;
+	free(args);
+	
+	
+	if (status == CONFIRMATION_PENDING) {
+		// keep sending confirmations until the handshake succeeds or fails
+		ConnectionRequest cr;
+		ConnectionConfirmation cc;
+		cc.status = status;
+		
+		Buffer cr_buffer;
+		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+		Buffer cc_buffer;
+		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
+		
+		while (cc.status == CONFIRMATION_PENDING) {
+			// reset the buffers and the structs
+			memset(cc_buffer.data, 0, cc_buffer.size);
+			memset(cr_buffer.data, 0, cr_buffer.size);
+			memset(&cc, 0, sizeof(ConnectionConfirmation));
+			memset(&cr, 0, sizeof(ConnectionRequest));
+
+			// receive the new request from the client
+			recv(clisockfd, cr_buffer.data, cr_buffer.size, 0);
+			deserialize_connection_request(&cr, &cr_buffer);
+			print_connection_request_struct(&cr);
+
+			// generate a new confirmation
+			init_connection_confirmation(&cc, &cr, clisockfd);
+			serialize_connection_confirmation(&cc_buffer, &cc);
+			// send the confirmation to the client
+			send(clisockfd, cc_buffer.data, cc_buffer.size, 0);
+		}
+		room_number = cc.connected_room.room_number;
+
+		free(cr_buffer.data);
+		free(cc_buffer.data);
+	}
+	printf("Server says confirmation success\n");
+		
+
+
+
+	// get room node
+	ROOM* room = find_room(room_number);
+	// get client node
+	USR* client = find_client(room, clisockfd);
+	// get color code
+	int color_code = get_color_code(room, client);
+	
+	// get peername (ip & other info) of client socket
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+	if (getpeername(clisockfd, (struct sockaddr*)&addr, &len) < 0) {
+		printf("thread main top error\n");
+		error("ERROR Unknown sender!");
+	}
+
+	// print log in server that user has connected
+	printf("Connected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
+	
+	// print the updated list of clients
+	// print_client_list(room);
+	
+	// announce to room that client joined
+	announce_status(room, clisockfd, username, JOINED);
+	//-------------------------------
+	// Now, we receive/send messages
+	char buffer[256];
+	int nsen, nrcv;
+
+	memset(buffer, 0, 256);
+
+	nrcv = recv(clisockfd, buffer, 255, 0);
+	if (nrcv < 0) error("ERROR recv() failed first recv");
+
+	while (nrcv > 0 && buffer[0] != '\n') {
+		// we send the message to everyone except the sender
+		broadcast(room, clisockfd, username, color_code, buffer);
+
+			memset(buffer, 0, 256);
+			nrcv = recv(clisockfd, buffer, 255, 0);
+			if (nrcv < 0) error("ERROR recv() failed in while loop");
+	}
+
+	remove_client(room, clisockfd);
+
+	// send message to all users that user has left
+	announce_status(room, clisockfd, username, LEFT);
+	
+	// print log in server that user has disconnected
+	printf("Disconnected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
+
+	print_client_list(room);
+	
+	close(clisockfd);
+	
+	room = NULL;
+
+	client = NULL;
+
+	return NULL;
+}
+
+
+
 int main(int argc, char *argv[])
 {
 	init_server_state();
@@ -694,11 +732,6 @@ int main(int argc, char *argv[])
 			error("ERROR on accept");
 		}
 		
-		// prepare ThreadArgs structure to pass client socket
-		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-		if (args == NULL) error("ERROR creating thread argument");
-		
-
 		// TODO: put handshake logic in a separate thread and function
 		/*================================HANDSHAKE================================*/
 		// retrieve room_number and username from client
@@ -723,55 +756,31 @@ int main(int argc, char *argv[])
 		// send the confirmation to the client
 		send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
 
-		// keep sending confirmations until the handshake succeeds or fails
-		while (cc.status == CONFIRMATION_PENDING) {
-			// reset the buffers and the structs
-			memset(cc_buffer.data, 0, cc_buffer.size);
-			memset(cr_buffer.data, 0, cr_buffer.size);
-			memset(&cc, 0, sizeof(ConnectionConfirmation));
-			memset(&cr, 0, sizeof(ConnectionRequest));
-
-			// receive the new request from the client
-			recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
-			deserialize_connection_request(&cr, &cr_buffer);
-			print_connection_request_struct(&cr);
-
-			// generate a new confirmation
-			init_connection_confirmation(&cc, &cr, newsockfd);
-			serialize_connection_confirmation(&cc_buffer, &cc);
-			// send the confirmation to the client
-			send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
-		}
-		printf("Server says confirmation success\n");
-
 		// Make sure to clean up the buffer
 		cleanup_buffer(&cr_buffer);
 		// TODO: Move this till after you send it
 		cleanup_buffer(&cc_buffer);
 
-		// memset(buffer, 0, BUFFER_SIZE);
-		// nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
-		// if (nrcv < 0) error("ERROR recv() failed");
+		/*=================SET THREAD ARGS=============================*/
 		
-		// /* set thread args */
-		// // set room_number
-		// args->room_number = ntohl(*(int *)(buffer));
-		// offset += sizeof(int);
+		// prepare ThreadArgs structure to pass client socket
+		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+		if (args == NULL) error("ERROR creating thread argument");
 		
-	
-		// // set username
-		// strncpy(args->username, (buffer + offset), MAX_USERNAME_LEN);
-		// offset += strlen(args->username);
-		
-		// // set socket file descriptor
-		// args->clisockfd = newsockfd;
+		args->status = cc.status;
+		// set room_number
+		args->room_number = cc.connected_room.room_number;
+		// set username
+		strncpy(args->username, cr.username, MAX_USERNAME_LEN);
+		// set socket file descriptor
+		args->clisockfd = newsockfd;
 
-		// pthread_t tid;
-		// if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
-		// 	error("ERROR creating a new thread");
-		// }
+		pthread_t tid;
+		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
+			error("ERROR creating a new thread");
+		}
 	}
-
+	printf("exiting.....\n");
 	close(sockfd);
 
 	return 0; 

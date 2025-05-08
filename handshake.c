@@ -59,12 +59,13 @@ char* username) {
 			room_number = UNINITIALIZED_ROOM_NUMBER;
 		} else {
 			type = JOIN_ROOM;
+			room_number = strtol(room_arg, NULL, 10);
 		}
 	} else {
 		error("ERROR: Invalid number of arguments");
 	}
 
-	init_connection_request_struct(type, room_arg, &cr, username);
+	init_connection_request_struct(type, room_number, &cr, username);
 	if (serialize_connection_request(cr_buffer, &cr) != sizeof(ConnectionRequest)) {
 		error("ERROR: Failed to serialize connection request");
 	}
@@ -72,7 +73,7 @@ char* username) {
 
 // given command line arguments, populates a ConnectionRequest struct
 // NOTE: you technically don't need type, but it makes things more explicit than if I just checked selection_arg being NULL
-int init_connection_request_struct(ConnectionRequestType type, char* room_arg,
+int init_connection_request_struct(ConnectionRequestType type, int room_number,
 ConnectionRequest *cr, char* username)
 {
 	memset(cr, 0, sizeof(ConnectionRequest));
@@ -88,7 +89,7 @@ ConnectionRequest *cr, char* username)
 			break;
 		case JOIN_ROOM:
 			cr->type = JOIN_ROOM;
-			cr->room_number = strtol(room_arg, NULL, 10);
+			cr->room_number = room_number;
 			break;
 		default:
 			error("ERROR: Invalid number of arguments");
@@ -114,13 +115,24 @@ int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char*
 username) {
 	// display the prompt for a user to select a room
 	print_room_selection_prompt(cc);
-
+	
 	// get the user's choice
 	char room_arg[MAX_USERNAME_LEN];
 	fgets(room_arg, MAX_USERNAME_LEN - 1, stdin);
+	// translate room choice to valid room number
+	
+	ConnectionRequestType type;
+	int room_number;
+	if (strcmp(room_arg, CREATE_NEW_ROOM_COMMAND) == 0) {
+		type = CREATE_NEW_ROOM;
+		room_number = UNINITIALIZED_ROOM_NUMBER;
+	} else {
+		type = JOIN_ROOM;
+		room_number = strtol(room_arg, NULL, 10);
+	}
 	// build a new connection request with the user's choice
 	ConnectionRequest cr;
-	init_connection_request_struct(JOIN_ROOM, room_arg, &cr, username);
+	init_connection_request_struct(type, room_number, &cr, username);
 	Buffer cr_buffer;
 	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
 	serialize_connection_request(&cr_buffer, &cr);
@@ -327,7 +339,7 @@ size_t deserialize_connection_confirmation(ConnectionConfirmation *cc, Buffer* c
 
 
 	printf("Deserializing connection confirmation... beginning\n");
-	print_hex(cc_buffer->data, sizeof(ConnectionConfirmation));
+	// print_hex(cc_buffer->data, sizeof(ConnectionConfirmation));
 
 	// deserialize status
 	int32_t status_net = 0;

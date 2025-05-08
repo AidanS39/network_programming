@@ -76,7 +76,7 @@ typedef struct _ConnectionConfirmation {
 int perform_handshake(int sockfd, Buffer* cr_buffer, char* username);
 void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer,
 char* username);
-int init_connection_request_struct(ConnectionRequestType type, char* room_arg,
+int init_connection_request_struct(ConnectionRequestType type, int room_number,
 ConnectionRequest *cr, char* username);
 int set_username(ConnectionRequest *cr, char* username);
 int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char*

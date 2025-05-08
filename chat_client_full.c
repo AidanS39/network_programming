@@ -20,6 +20,7 @@
 // 	pthread_mutex_t client_state_mutex;
 // } ClientState;
 
+// global username variable
 char username[MAX_USERNAME_LEN];
 
 typedef struct _ThreadArgs {
@@ -150,7 +151,7 @@ int main(int argc, char *argv[])
 	}
 	
 	/*===========================USERNAME HANDLING================================*/
-	
+	// initialize global variable username 	
 	init_username();
 
 	// Parse command line arguments and set up initial connection request (serialized buffer)
@@ -189,30 +190,28 @@ int main(int argc, char *argv[])
 	// TODO: loop until handshake is successful
 	perform_handshake(sockfd, &cr_buffer, username);
 	cleanup_buffer(&cr_buffer);
-
-
 	
-	// args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	// args->clisockfd = sockfd;
-	// args->csm = &csm;
-	// pthread_create(&tid_recv, NULL, thread_main_recv, (void*) args);
+	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	args->clisockfd = sockfd;
+	args->csm = &csm;
+	pthread_create(&tid_recv, NULL, thread_main_recv, (void*) args);
 	
-	// args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	// args->clisockfd = sockfd;
-	// args->csm = &csm;
-	// pthread_create(&tid_send, NULL, thread_main_send, (void*) args);
+	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	args->clisockfd = sockfd;
+	args->csm = &csm;
+	pthread_create(&tid_send, NULL, thread_main_send, (void*) args);
 
 
-	// // NOTE: I'm pretty sure you can't/shouldn't join a detached thread
-	// // pthread_join(tid_send, NULL);
+	// NOTE: I'm pretty sure you can't/shouldn't join a detached thread
+	// pthread_join(tid_send, NULL);
 
-	// pthread_mutex_lock(&csm.connection_status_mutex);
-	// while (csm.connection_status != RECEIVED_DISCONNECT_CONFIRMATION) {
-	// 	pthread_cond_wait(&csm.connection_status_cond, &csm.connection_status_mutex);
-	// }
-	// pthread_mutex_unlock(&csm.connection_status_mutex);
+	pthread_mutex_lock(&csm.connection_status_mutex);
+	while (csm.connection_status != RECEIVED_DISCONNECT_CONFIRMATION) {
+		pthread_cond_wait(&csm.connection_status_cond, &csm.connection_status_mutex);
+	}
+	pthread_mutex_unlock(&csm.connection_status_mutex);
 
-	// close(sockfd);
+	close(sockfd);
 
 	csm_destroy(&csm);
 
