@@ -259,6 +259,8 @@ size_t serialize_handshake_room_description(Buffer* hrd_buffer, HandshakeRoomDes
 void print_serialized_connection_confirmation(Buffer* cc_buffer) {
 	ConnectionConfirmation cc;
 	memcpy(&cc, cc_buffer->data, sizeof(ConnectionConfirmation));
+
+	printf("Printing serialized connection confirmation...\n");
 	print_connection_confirmation(&cc);
 }
 
@@ -267,10 +269,15 @@ void print_serialized_connection_confirmation(Buffer* cc_buffer) {
 /* ---------------------------------------- DESERIALIZATION ---------------------------------------- */
 
 // Takes a buffer that represents a serialized ConnectionConfirmation struct and deserializes it into a ConnectionConfirmation struct
+// TODO: I don't love the complexity here. Copying all the pieces into temporary buffers...
 size_t deserialize_connection_confirmation(ConnectionConfirmation *cc, Buffer* cc_buffer) {
 	assert(cc_buffer->size == sizeof(ConnectionConfirmation));
 
 	size_t offset = 0;
+
+
+	printf("Deserializing connection confirmation... beginning\n");
+	print_hex(cc_buffer->data, sizeof(ConnectionConfirmation));
 
 	// deserialize status
 	int32_t status_net = 0;
@@ -278,15 +285,28 @@ size_t deserialize_connection_confirmation(ConnectionConfirmation *cc, Buffer* c
 	cc->status = (ConfirmationStatus) ntohl(status_net);
 	offset += sizeof(status_net);
 
+
+	// TODO: pull these out into a function
 	// deserialize connected room
-	unsigned char* cr_buffer[sizeof(HandshakeRoomDescription)];
-	assert(deserialize_handshake_room_description(&cc->connected_room, cc_buffer) == sizeof(HandshakeRoomDescription));
+	// Make a smaller temporary buffer that just contains the connected room description
+	Buffer hrd_buffer;
+	init_buffer(&hrd_buffer, sizeof(HandshakeRoomDescription));
+	// copy just the connected room description into the temporary buffer
+	memcpy(hrd_buffer.data, cc_buffer->data + offset, sizeof(HandshakeRoomDescription));
+	assert(deserialize_handshake_room_description(&cc->connected_room, &hrd_buffer) == sizeof(HandshakeRoomDescription));
 	offset += sizeof(HandshakeRoomDescription);
+	cleanup_buffer(&hrd_buffer);
+
 
 	// deserialize available rooms
-	unsigned char* ar_buffer[sizeof(HandshakeAvailableRooms)];
-	assert(deserialize_handshake_available_rooms(&cc->available_rooms, cc_buffer) == sizeof(HandshakeAvailableRooms));
+	// Make smaller temporary buffer that just contains the available rooms
+	Buffer ar_buffer;
+	init_buffer(&ar_buffer, sizeof(HandshakeAvailableRooms));
+	// copy just the available rooms into the temporary buffer
+	memcpy(ar_buffer.data, cc_buffer->data + offset, sizeof(HandshakeAvailableRooms));
+	assert(deserialize_handshake_available_rooms(&cc->available_rooms, &ar_buffer) == sizeof(HandshakeAvailableRooms));
 	offset += sizeof(HandshakeAvailableRooms);
+	cleanup_buffer(&ar_buffer);
 
 	return offset;
 }
@@ -305,8 +325,14 @@ size_t deserialize_handshake_available_rooms(HandshakeAvailableRooms *har, Buffe
 	
 	// deserialize room descriptions
 	for (int i = 0; i < MAX_ROOMS; i++) {
-		assert(deserialize_handshake_room_description(&har->rooms[i], har_buffer) == sizeof(HandshakeRoomDescription));
+		// For each room you need to make a smaller temporary buffer to hold the room description
+		Buffer hrd_buffer;
+		init_buffer(&hrd_buffer, sizeof(HandshakeRoomDescription));
+		// copy just the room description into the temporary buffer
+		memcpy(hrd_buffer.data, har_buffer->data + offset, sizeof(HandshakeRoomDescription));
+		assert(deserialize_handshake_room_description(&har->rooms[i], &hrd_buffer) == sizeof(HandshakeRoomDescription));
 		offset += sizeof(HandshakeRoomDescription);
+		cleanup_buffer(&hrd_buffer);
 	}
 
 	return offset;
@@ -345,7 +371,8 @@ void print_connection_confirmation(ConnectionConfirmation *cc) {
 
 	// available rooms
 	printf("Connection confirmation num available rooms: %d\n", cc->available_rooms.num_rooms);
-	for (int i = 0; i < cc->available_rooms.num_rooms; i++) {
+	// NOTE: you can't use the available rooms' num rooms because it may be serialized
+	for (int i = 0; i < MAX_ROOMS; i++) {
 		// room description
 		printf("Room number: %d\tNumber of connected clients: %d\n",
 				cc->available_rooms.rooms[i].room_number,

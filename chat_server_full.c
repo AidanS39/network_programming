@@ -484,7 +484,7 @@ void* thread_main(void* args)
 	printf("Connected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
 	
 	// print the updated list of clients
-	print_client_list(room);
+	// print_client_list(room);
 	
 	// announce to room that client joined
 	announce_status(room, clisockfd, username, JOINED);
@@ -572,8 +572,6 @@ void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionReques
 	// connected room
 	cc->connected_room.room_number = new_room->room_number;
 	cc->connected_room.num_connected_clients = new_room->num_connected_clients;
-
-	print_connection_confirmation(cc);
 }
 
 void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
@@ -615,10 +613,6 @@ int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* 
 			handle_invalid_request(cc, cr, clisockfd);
 			break;
 	}
-
-	mock_server_state();
-	print_rooms_with_clients();
-	print_connection_confirmation(cc);
 	return 0;
 }
 
@@ -685,6 +679,9 @@ int main(int argc, char *argv[])
 	int offset;
 	int nrcv;
 
+	// TODO: Remove this
+	mock_server_state();
+
 	while(1) {
 		offset = 0;
 		
@@ -705,32 +702,37 @@ int main(int argc, char *argv[])
 		Buffer cr_buffer;
 		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
 
+		// TODO: put handshake logic in a separate thread
+		// client sends connection request server processes it into a ConnectionRequest struct
 		nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
-
 		ConnectionRequest cr;
 		deserialize_connection_request(&cr, &cr_buffer);
 		// Make sure to clean up the buffer
 		cleanup_buffer(&cr_buffer);
+		// print_connection_request_struct(&cr);
 
-		print_connection_request_struct(&cr);
-
-
-
-		// TODO: send to separate thread
+		// Process the connection request and generate a connection confirmation in response
 		// generate connection confirmation from connection request
 		ConnectionConfirmation cc;
 		init_connection_confirmation(&cc, &cr, newsockfd);
-
 		// serialize connection confirmation
 		Buffer cc_buffer;
 		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
-
 		serialize_connection_confirmation(&cc_buffer, &cc);
-		print_serialized_connection_confirmation(&cc_buffer);
+		// print_serialized_connection_confirmation(&cc_buffer);
+
+		// TODO: remove
+		// Just making sure the client will be able to deserialize the connection confirmation
+		ConnectionConfirmation cc_deserialized;
+		deserialize_connection_confirmation(&cc_deserialized, &cc_buffer);
+		printf("Deserialized connection confirmation:\n");
+		print_connection_confirmation(&cc_deserialized);
+		
 
 		// TODO: Move this till after you send it
 		cleanup_buffer(&cc_buffer);
+
 		// memset(buffer, 0, BUFFER_SIZE);
 		// nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
 		// if (nrcv < 0) error("ERROR recv() failed");

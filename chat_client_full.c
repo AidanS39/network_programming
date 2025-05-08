@@ -134,9 +134,9 @@ int main(int argc, char *argv[])
 	}
 
 	// Parse command line arguments and set up initial connection request (serialized buffer)
-	Buffer handshake_buffer;
-	init_buffer(&handshake_buffer, sizeof(ConnectionRequest));
-	prepare_connection_request(argc, room_arg, &handshake_buffer);
+	Buffer cr_buffer;
+	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+	prepare_connection_request(argc, room_arg, &cr_buffer);
 
 
 	/*================================CONNECTION STATUS MONITOR============================*/
@@ -167,8 +167,8 @@ int main(int argc, char *argv[])
 	ThreadArgs* args; // reuse for both threads
 	
 	// TODO: loop until handshake is successful
-	initiate_server_handshake(sockfd, &handshake_buffer);
-	cleanup_buffer(&handshake_buffer);
+	initiate_server_handshake(sockfd, &cr_buffer);
+	cleanup_buffer(&cr_buffer);
 
 
 	
