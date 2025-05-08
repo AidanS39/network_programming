@@ -8,6 +8,6 @@
 
 #define PORT_NUM 1004
 
-void set_server_addr(int sockfd, char* hostname, struct sockaddr_in* serv_addr);
+void set_server_addr(char* hostname, struct sockaddr_in* serv_addr);
 
 #endif

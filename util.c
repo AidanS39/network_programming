@@ -54,3 +54,17 @@ void print_server_addr(struct sockaddr_in* serv_addr) {
 	printf("sin_addr: %s\n", inet_ntoa(serv_addr->sin_addr));
 	printf("sin_zero: %s\n", serv_addr->sin_zero);
 }
+
+// Free memory allocated for the buffer and reset the size and data pointer
+void cleanup_buffer(Buffer* buffer) {
+	free(buffer->data);
+	buffer->data = NULL;
+	buffer->size = 0;
+}
+
+// Initialize the buffer with the given size
+void init_buffer(Buffer* buffer, size_t size) {
+	buffer->size = size;
+	buffer->data = (unsigned char*) malloc(size);
+	memset(buffer->data, 0, size);
+}

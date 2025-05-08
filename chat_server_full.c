@@ -73,9 +73,17 @@ int get_color_code(ROOM* room, USR* client);
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message);
 void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
+void print_rooms_with_clients();
 
-void initiate_client_handshake(int sockfd, ConnectionRequest* cr);
+void initiate_client_handshake(int sockfd, ConnectionRequest* cr, size_t cr_buffer_size);
+
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+
+void mock_server_state();
 
 
 int cc_set_available_rooms(ConnectionConfirmation* cc);
@@ -533,55 +541,117 @@ int cc_set_available_rooms(ConnectionConfirmation* cc) {
 }
 
 
+
+void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	ROOM* requested_room = find_room(cr->room_number);
+
+	if (requested_room != NULL) { // room exists
+		// status
+		cc->status = CONFIRMATION_SUCCESS;
+		// connected room
+		cc->connected_room.room_number = cr->room_number;
+		cc->connected_room.num_connected_clients = requested_room->num_connected_clients;
+
+		add_client(requested_room, clisockfd, cr->username);
+	}
+	else { // room does not exist
+		// status
+		cc->status = CONFIRMATION_FAILURE;
+		// connected room
+		cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
+		cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
+	}
+}
+
+void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	// status
+	cc->status = CONFIRMATION_SUCCESS;
+	// create and connect room
+	ROOM* new_room = create_room();
+	add_client(new_room, clisockfd, cr->username);
+	// connected room
+	cc->connected_room.room_number = new_room->room_number;
+	cc->connected_room.num_connected_clients = new_room->num_connected_clients;
+
+	print_connection_confirmation(cc);
+}
+
+void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	// status
+	cc->status = CONFIRMATION_PENDING;
+	// connected room
+	cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
+	cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
+	// available rooms
+	cc_set_available_rooms(cc);
+}
+
+void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	cc->status = CONFIRMATION_FAILURE;
+	cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
+	cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
+}
+
+// Populates a ConnectionConfirmation struct with the appropriate values based on the ConnectionRequest
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
 	memset(cc, 0, sizeof(ConnectionConfirmation));
 	switch(cr->type) {
 		case JOIN_ROOM: // client passed in room that they want to join
-			ROOM* requested_room = find_room(cr->room_number);
-			if (requested_room != NULL) {
-				// prepare confirmation packet
-				cc->status = CONFIRMATION_SUCCESS;
-				cc->connected_room.room_number = cr->room_number;
-				cc->connected_room.num_connected_clients = requested_room->num_connected_clients;
-
-				add_client(requested_room, clisockfd, cr->username);
-			}
-			else {
-				cc->status = CONFIRMATION_FAILURE;
-				cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
-				cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
-			}
+			handle_join_room_request(cc, cr, clisockfd);
 			break;
 		case CREATE_NEW_ROOM: // client wants to create a new room
-			cc->status = CONFIRMATION_SUCCESS;
-			ROOM* new_room = create_room();
-			add_client(new_room, clisockfd, cr->username);
-			cc->connected_room.room_number = new_room->room_number;
-			cc->connected_room.num_connected_clients = new_room->num_connected_clients;
+			handle_create_new_room_request(cc, cr, clisockfd);
 			break;
 		case SELECT_ROOM: // client wants to select a room to join
 			// TODO: would be good to lock server_state but create_room is locking server state so deadlock
 			// need to create different locks can't have one lock for monolithic server state
-			if (server_state.num_rooms == 0) {
-				cc->status = CONFIRMATION_SUCCESS;
-				ROOM* new_room = create_room();
-				add_client(new_room, clisockfd, cr->username);
-				cc->connected_room.room_number = new_room->room_number;
-				cc->connected_room.num_connected_clients = new_room->num_connected_clients;
-				cc_set_available_rooms(cc);
-				break;
+			if (server_state.num_rooms == 0) { // no available rooms so create one
+				handle_create_new_room_request(cc, cr, clisockfd);
+			} else { // there are available rooms so select one
+				handle_select_room_request(cc, cr, clisockfd);
 			}
-
-			cc->status = CONFIRMATION_PENDING;
-			cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
-			cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
 			break;
 		default:
-			cc->status = CONFIRMATION_FAILURE;
+			handle_invalid_request(cc, cr, clisockfd);
 			break;
 	}
+
+	mock_server_state();
+	print_rooms_with_clients();
 	print_connection_confirmation(cc);
 	return 0;
+}
+
+void mock_server_state() {
+	server_state.num_rooms = 3;
+	ROOM* room_1 = create_room();
+	ROOM* room_2 = create_room();
+	ROOM* room_3 = create_room();
+
+	add_client(room_1, 1, "user_1");
+	add_client(room_1, 2, "user_2");
+	add_client(room_1, 3, "user_3");
+
+	add_client(room_2, 4, "user_4");
+	add_client(room_2, 5, "user_5");
+	add_client(room_2, 6, "user_6");
+
+	add_client(room_3, 7, "user_7");
+	add_client(room_3, 8, "user_8");
+	add_client(room_3, 9, "user_9");
+}
+
+void print_rooms_with_clients() {
+	ROOM* cur_room = room_head;
+	while (cur_room != NULL) {
+		printf("Room %d: %d clients\n", cur_room->room_number, cur_room->num_connected_clients);
+		USR* cur_client = cur_room->usr_head;
+		while (cur_client != NULL) {
+			printf("  %s\n", cur_client->username);
+			cur_client = cur_client->next;
+		}
+		cur_room = cur_room->next;
+	}
 }
 
 
@@ -632,20 +702,35 @@ int main(int argc, char *argv[])
 		if (args == NULL) error("ERROR creating thread argument");
 		
 		// retrieve room_number and username from client
-		unsigned char handshake_buffer[sizeof(ConnectionRequest)];
-		memset(handshake_buffer, 0, sizeof(handshake_buffer));
-		nrcv = recv(newsockfd, handshake_buffer, sizeof(ConnectionRequest), 0);
+		Buffer cr_buffer;
+		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+
+		nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
 
 		ConnectionRequest cr;
-		deserialize_connection_request(handshake_buffer, &cr);
-		print_connection_request(&cr);
+		deserialize_connection_request(&cr, &cr_buffer);
+		// Make sure to clean up the buffer
+		cleanup_buffer(&cr_buffer);
+
+		print_connection_request_struct(&cr);
+
+
 
 		// TODO: send to separate thread
+		// generate connection confirmation from connection request
 		ConnectionConfirmation cc;
 		init_connection_confirmation(&cc, &cr, newsockfd);
 
+		// serialize connection confirmation
+		Buffer cc_buffer;
+		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
 
+		serialize_connection_confirmation(&cc_buffer, &cc);
+		print_serialized_connection_confirmation(&cc_buffer);
+
+		// TODO: Move this till after you send it
+		cleanup_buffer(&cc_buffer);
 		// memset(buffer, 0, BUFFER_SIZE);
 		// nrcv = recv(newsockfd, buffer, BUFFER_SIZE, 0);
 		// if (nrcv < 0) error("ERROR recv() failed");

@@ -23,6 +23,7 @@ void* thread_main_recv(void* args);
 void* thread_main_send(void* args);
 
 
+// TODO: revisit when dealing with messages cleanly and use Buffer struct
 void* thread_main_recv(void* args)
 {
 	pthread_detach(pthread_self());
@@ -133,8 +134,9 @@ int main(int argc, char *argv[])
 	}
 
 	// Parse command line arguments and set up initial connection request (serialized buffer)
-	unsigned char handshake_buffer[sizeof(ConnectionRequest)];
-	prepare_connection_request(argc, room_arg, handshake_buffer);
+	Buffer handshake_buffer;
+	init_buffer(&handshake_buffer, sizeof(ConnectionRequest));
+	prepare_connection_request(argc, room_arg, &handshake_buffer);
 
 
 	/*================================CONNECTION STATUS MONITOR============================*/
@@ -148,7 +150,7 @@ int main(int argc, char *argv[])
 	if (sockfd < 0) error("ERROR opening socket");
 
 	struct sockaddr_in serv_addr;
-	set_server_addr(sockfd, argv[1], &serv_addr);
+	set_server_addr(argv[1], &serv_addr);
 
 	// Try connecting to server
 	printf("Try connecting to %s...\n", inet_ntoa(serv_addr.sin_addr));
@@ -165,7 +167,8 @@ int main(int argc, char *argv[])
 	ThreadArgs* args; // reuse for both threads
 	
 	// TODO: loop until handshake is successful
-	initiate_server_handshake(sockfd, handshake_buffer);
+	initiate_server_handshake(sockfd, &handshake_buffer);
+	cleanup_buffer(&handshake_buffer);
 
 
 	

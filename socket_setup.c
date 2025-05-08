@@ -1,6 +1,6 @@
 #include "socket_setup.h"
 
-void set_server_addr(int sockfd, char* hostname, struct sockaddr_in* serv_addr)
+void set_server_addr(char* hostname, struct sockaddr_in* serv_addr)
 {
 	memset((char*) serv_addr, 0, sizeof(*serv_addr));
 	serv_addr->sin_family = AF_INET;
