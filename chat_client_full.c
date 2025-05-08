@@ -12,6 +12,14 @@
 #define BUFFER_SIZE 512
 #define EXIT_COMMAND "\n"
 
+// TODO: implement client state in such a way that the client can set a username
+// and not have to ask the user for it again if the server asks for more information
+
+// typedef struct _ClientState {
+// 	char username[MAX_USERNAME_LEN];
+// 	pthread_mutex_t client_state_mutex;
+// } ClientState;
+
 
 typedef struct _ThreadArgs {
 	int clisockfd;
@@ -167,7 +175,7 @@ int main(int argc, char *argv[])
 	ThreadArgs* args; // reuse for both threads
 	
 	// TODO: loop until handshake is successful
-	initiate_server_handshake(sockfd, &cr_buffer);
+	perform_handshake(sockfd, &cr_buffer);
 	cleanup_buffer(&cr_buffer);
 
 

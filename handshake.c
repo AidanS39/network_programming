@@ -5,55 +5,88 @@
 /*========================================= CONNECTION REQUEST ==========================================*/
 
 // sends a ConnectionRequest struct to the server and receives a ConnectionConfirmation struct in return
-int initiate_server_handshake(int sockfd, Buffer* cr_buffer)
+// until the server confirms or denies the connection
+int perform_handshake(int sockfd, Buffer* cr_buffer)
 {
 	int n = send(sockfd, cr_buffer->data, cr_buffer->size, 0);
 	if (n < 0) error("ERROR writing to socket");
 
-	// TODO: implement this
-
-	// ConnectionConfirmation cc;
-	// n = recv(sockfd, &cc, sizeof(cc), 0);
-	// if (n < 0) error("ERROR reading from socket");
-
-	// print_connection_confirmation(&cc);
+	// listen in a loop until you get a successful connection confirmation
+	ConnectionConfirmation cc;
+	Buffer cc_buffer;
+	init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
+	while (1) {
+		n = recv(sockfd, cc_buffer.data, cc_buffer.size, 0);
+		if (n < 0) { // error reading from socket
+			cleanup_buffer(&cc_buffer);
+			error("ERROR reading from socket");
+		}
+		deserialize_connection_confirmation(&cc, &cc_buffer);
+		print_connection_confirmation(&cc);
+		if (cc.status == CONFIRMATION_SUCCESS) {
+			break;
+		} else if (cc.status == CONFIRMATION_PENDING) {
+			handle_pending_confirmation(sockfd, &cc);
+			printf("Server says pending confirmation\n");
+		} else {
+			cleanup_buffer(&cc_buffer);
+			error("ERROR: Connection confirmation status is invalid");
+		}
+	}
+	cleanup_buffer(&cc_buffer);
 
 	return 0;
 }
 
+
 // given command line arguments, populates a serialized connection request buffer
 void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer) {
-	printf("Preparing connection request...\n");
-	printf("size of cr_buffer: %zu\n", cr_buffer->size);
-	printf("size of ConnectionRequest: %zu\n", sizeof(ConnectionRequest));
+	// printf("Preparing connection request...\n");
+	// printf("size of cr_buffer: %zu\n", cr_buffer->size);
+	// printf("size of ConnectionRequest: %zu\n", sizeof(ConnectionRequest));
 	ConnectionRequest cr;
-	init_connection_request_struct(argc, room_arg, &cr);
+	ConnectionRequestType type;
+	int room_number;
+	if (argc == 2) {
+		type = SELECT_ROOM;
+		room_number = UNINITIALIZED_ROOM_NUMBER;
+	} else if (argc == 3 && room_arg != NULL) {
+		// if the user wants to create a new room, set the type to CREATE_NEW_ROOM
+		// otherwise they should enter a room number to join
+		if (strcmp(room_arg, CREATE_NEW_ROOM_COMMAND) == 0) {
+			type = CREATE_NEW_ROOM;
+			room_number = UNINITIALIZED_ROOM_NUMBER;
+		} else {
+			type = JOIN_ROOM;
+		}
+	} else {
+		error("ERROR: Invalid number of arguments");
+	}
+
+	init_connection_request_struct(type, room_arg, &cr);
 	if (serialize_connection_request(cr_buffer, &cr) != sizeof(ConnectionRequest)) {
 		error("ERROR: Failed to serialize connection request");
 	}
 }
 
 // given command line arguments, populates a ConnectionRequest struct
-// NOTE: you technically don't need argc, but it makes things more explicit than if I just checked room_arg being NULL
-int init_connection_request_struct(int argc, char* room_arg, ConnectionRequest *cr)
+// NOTE: you technically don't need type, but it makes things more explicit than if I just checked selection_arg being NULL
+int init_connection_request_struct(ConnectionRequestType type, char* room_arg, ConnectionRequest *cr)
 {
 	memset(cr, 0, sizeof(ConnectionRequest));
 
-	switch (argc) {
-		case 2: // display rooms and ask user to choose one
+	switch (type) {
+		case SELECT_ROOM: // display rooms and ask user to choose one
 			cr->type = SELECT_ROOM;
 			cr->room_number = UNINITIALIZED_ROOM_NUMBER;
 			break;
-		case 3: // join room with specified room number or new room
-			assert(room_arg != NULL);
-			if (strncmp(room_arg, CREATE_NEW_ROOM_COMMAND, strlen(CREATE_NEW_ROOM_COMMAND)) == 0) {
-				cr->type = CREATE_NEW_ROOM;
-				cr->room_number = UNINITIALIZED_ROOM_NUMBER;
-			}
-			else {
-				cr->type = JOIN_ROOM;
-				cr->room_number = (int)strtol(room_arg, NULL, 10);
-			}
+		case CREATE_NEW_ROOM: // join room with specified room number or new room
+			cr->type = CREATE_NEW_ROOM;
+			cr->room_number = UNINITIALIZED_ROOM_NUMBER;
+			break;
+		case JOIN_ROOM:
+			cr->type = JOIN_ROOM;
+			cr->room_number = strtol(room_arg, NULL, 10);
 			break;
 		default:
 			error("ERROR: Invalid number of arguments");
@@ -65,6 +98,7 @@ int init_connection_request_struct(int argc, char* room_arg, ConnectionRequest *
 }
 
 // asks user for username and sets it in the ConnectionRequest struct
+// NOTE: we don't want to ask for the username if it was already provided
 int set_username(ConnectionRequest *cr)
 {
 	printf("Type your username: ");
@@ -80,6 +114,28 @@ int set_username(ConnectionRequest *cr)
 	return 0;
 }
 
+// if the client sends a request without a room number or asking for a new room, the server will send back a pending confirmation
+// this function handles that by displaying the prompt for a user to select a room
+// and sending the user's choice back to the server
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc) {
+	// display the prompt for a user to select a room
+	print_room_selection_prompt(cc);
+
+	// get the user's choice
+	char room_arg[MAX_USERNAME_LEN];
+	fgets(room_arg, MAX_USERNAME_LEN - 1, stdin);
+	// build a new connection request with the user's choice
+	ConnectionRequest cr;
+	init_connection_request_struct(JOIN_ROOM, room_arg, &cr);
+	Buffer cr_buffer;
+	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+	serialize_connection_request(&cr_buffer, &cr);
+
+	// send the new connection request to the server
+	send(sockfd, cr_buffer.data, cr_buffer.size, 0);
+
+	return 0;
+}
 
 
 /* ---------------------------------------- SERIALIZATION ---------------------------------------- */

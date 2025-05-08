@@ -698,18 +698,18 @@ int main(int argc, char *argv[])
 		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 		if (args == NULL) error("ERROR creating thread argument");
 		
+
+		// TODO: put handshake logic in a separate thread and function
+		/*================================HANDSHAKE================================*/
 		// retrieve room_number and username from client
 		Buffer cr_buffer;
 		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
 
-		// TODO: put handshake logic in a separate thread
 		// client sends connection request server processes it into a ConnectionRequest struct
 		nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
 		if (nrcv < 0) error("ERROR recv() failed");
 		ConnectionRequest cr;
 		deserialize_connection_request(&cr, &cr_buffer);
-		// Make sure to clean up the buffer
-		cleanup_buffer(&cr_buffer);
 		// print_connection_request_struct(&cr);
 
 		// Process the connection request and generate a connection confirmation in response
@@ -720,16 +720,31 @@ int main(int argc, char *argv[])
 		Buffer cc_buffer;
 		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
 		serialize_connection_confirmation(&cc_buffer, &cc);
-		// print_serialized_connection_confirmation(&cc_buffer);
+		// send the confirmation to the client
+		send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
 
-		// TODO: remove
-		// Just making sure the client will be able to deserialize the connection confirmation
-		ConnectionConfirmation cc_deserialized;
-		deserialize_connection_confirmation(&cc_deserialized, &cc_buffer);
-		printf("Deserialized connection confirmation:\n");
-		print_connection_confirmation(&cc_deserialized);
-		
+		// keep sending confirmations until the handshake succeeds or fails
+		while (cc.status == CONFIRMATION_PENDING) {
+			// reset the buffers and the structs
+			memset(cc_buffer.data, 0, cc_buffer.size);
+			memset(cr_buffer.data, 0, cr_buffer.size);
+			memset(&cc, 0, sizeof(ConnectionConfirmation));
+			memset(&cr, 0, sizeof(ConnectionRequest));
 
+			// receive the new request from the client
+			recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
+			deserialize_connection_request(&cr, &cr_buffer);
+
+			// generate a new confirmation
+			init_connection_confirmation(&cc, &cr, newsockfd);
+			serialize_connection_confirmation(&cc_buffer, &cc);
+			// send the confirmation to the client
+			send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
+		}
+		printf("Server says confirmation success\n");
+
+		// Make sure to clean up the buffer
+		cleanup_buffer(&cr_buffer);
 		// TODO: Move this till after you send it
 		cleanup_buffer(&cc_buffer);
 
