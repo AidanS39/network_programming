@@ -20,6 +20,7 @@
 // 	pthread_mutex_t client_state_mutex;
 // } ClientState;
 
+char username[MAX_USERNAME_LEN];
 
 typedef struct _ThreadArgs {
 	int clisockfd;
@@ -119,8 +120,15 @@ void* thread_main_send(void* args)
 	return NULL;
 }
 
-
-
+// sets the global username. only should be called once (for threading)
+void init_username() {
+	printf("Type your username: ");
+	if (fgets(username, MAX_USERNAME_LEN - 1, stdin) != NULL) {
+		trim_whitespace(username);
+	} else {
+		error("Invalid username.");
+	}
+}
 
 int main(int argc, char *argv[])
 {
@@ -140,11 +148,15 @@ int main(int argc, char *argv[])
 			"./chat_client <hostname> new\n"
 			"./chat_client <hostname>");
 	}
+	
+	/*===========================USERNAME HANDLING================================*/
+	
+	init_username();
 
 	// Parse command line arguments and set up initial connection request (serialized buffer)
 	Buffer cr_buffer;
 	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
-	prepare_connection_request(argc, room_arg, &cr_buffer);
+	prepare_connection_request(argc, room_arg, &cr_buffer, username);
 
 
 	/*================================CONNECTION STATUS MONITOR============================*/
@@ -175,7 +187,7 @@ int main(int argc, char *argv[])
 	ThreadArgs* args; // reuse for both threads
 	
 	// TODO: loop until handshake is successful
-	perform_handshake(sockfd, &cr_buffer);
+	perform_handshake(sockfd, &cr_buffer, username);
 	cleanup_buffer(&cr_buffer);
 
 

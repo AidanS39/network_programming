@@ -710,7 +710,7 @@ int main(int argc, char *argv[])
 		if (nrcv < 0) error("ERROR recv() failed");
 		ConnectionRequest cr;
 		deserialize_connection_request(&cr, &cr_buffer);
-		// print_connection_request_struct(&cr);
+		print_connection_request_struct(&cr);
 
 		// Process the connection request and generate a connection confirmation in response
 		// generate connection confirmation from connection request
@@ -734,6 +734,7 @@ int main(int argc, char *argv[])
 			// receive the new request from the client
 			recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
 			deserialize_connection_request(&cr, &cr_buffer);
+			print_connection_request_struct(&cr);
 
 			// generate a new confirmation
 			init_connection_confirmation(&cc, &cr, newsockfd);

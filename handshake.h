@@ -14,8 +14,6 @@
 #define UNINITIALIZED_NUM_CONNECTED_CLIENTS -1
 #define CREATE_NEW_ROOM_COMMAND "new" 
 
-
-
 /*=========================================STRUCTS=========================================*/
 
 /* NOTE: packing all my structs so that I don't have to worry about padding when
@@ -75,11 +73,14 @@ typedef struct _ConnectionConfirmation {
 
 /* ---------------------------------------- CONNECTION REQUEST ---------------------------------------- */
 
-int perform_handshake(int sockfd, Buffer* cr_buffer);
-void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer);
-int init_connection_request_struct(ConnectionRequestType type, char* room_arg, ConnectionRequest *cr);
-int set_username(ConnectionRequest *cr);
-int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc);
+int perform_handshake(int sockfd, Buffer* cr_buffer, char* username);
+void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer,
+char* username);
+int init_connection_request_struct(ConnectionRequestType type, char* room_arg,
+ConnectionRequest *cr, char* username);
+int set_username(ConnectionRequest *cr, char* username);
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char*
+username);
 // SERIALIZATION
 
 size_t serialize_connection_request(Buffer* cr_buffer, ConnectionRequest *cr);
