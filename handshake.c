@@ -22,16 +22,17 @@ int perform_handshake(int sockfd, Buffer* cr_buffer, char* username)
 			error("ERROR reading from socket");
 		}
 		deserialize_connection_confirmation(&cc, &cc_buffer);
-		print_connection_confirmation(&cc);
+		// print_connection_confirmation(&cc);
 		if (cc.status == CONFIRMATION_SUCCESS) {
 			break;
 		} else if (cc.status == CONFIRMATION_PENDING) {
-			handle_pending_confirmation(sockfd, &cc, username);
 			printf("Server says pending confirmation\n");
+			handle_pending_confirmation(sockfd, &cc, username);
 		} else {
 			cleanup_buffer(&cc_buffer);
 			error("ERROR: Connection confirmation status is invalid");
 		}
+		memset(cc_buffer.data, 0, cc_buffer.size);
 	}
 	cleanup_buffer(&cc_buffer);
 
@@ -120,6 +121,7 @@ username) {
 	char room_arg[MAX_USERNAME_LEN];
 	fgets(room_arg, MAX_USERNAME_LEN - 1, stdin);
 	// translate room choice to valid room number
+	trim_whitespace(room_arg);
 	
 	ConnectionRequestType type;
 	int room_number;
@@ -139,6 +141,8 @@ username) {
 
 	// send the new connection request to the server
 	send(sockfd, cr_buffer.data, cr_buffer.size, 0);
+	
+	cleanup_buffer(&cr_buffer);
 
 	return 0;
 }
@@ -338,7 +342,7 @@ size_t deserialize_connection_confirmation(ConnectionConfirmation *cc, Buffer* c
 	size_t offset = 0;
 
 
-	printf("Deserializing connection confirmation... beginning\n");
+	// printf("Deserializing connection confirmation... beginning\n");
 	// print_hex(cc_buffer->data, sizeof(ConnectionConfirmation));
 
 	// deserialize status

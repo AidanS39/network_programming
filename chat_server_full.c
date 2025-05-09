@@ -411,6 +411,7 @@ void announce_status(ROOM* room, int fromfd, char* username, int status)
 	struct sockaddr_in cliaddr;
 	socklen_t clen = sizeof(cliaddr);
 	if (getpeername(fromfd, (struct sockaddr*)&cliaddr, &clen) < 0) {
+		printf("announce error\n");
 		error("ERROR Unknown sender!");
 	}
 
@@ -522,8 +523,6 @@ int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* 
 			handle_create_new_room_request(cc, cr, clisockfd);
 			break;
 		case SELECT_ROOM: // client wants to select a room to join
-			// TODO: would be good to lock server_state but create_room is locking server state so deadlock
-			// need to create different locks can't have one lock for monolithic server state
 			if (server_state.num_rooms == 0) { // no available rooms so create one
 				handle_create_new_room_request(cc, cr, clisockfd);
 			} else { // there are available rooms so select one
@@ -585,7 +584,6 @@ void* thread_main(void* args)
 	int room_number = ((ThreadArgs*) args)->room_number;
 	free(args);
 	
-	
 	if (status == CONFIRMATION_PENDING) {
 		// keep sending confirmations until the handshake succeeds or fails
 		ConnectionRequest cr;
@@ -617,13 +615,15 @@ void* thread_main(void* args)
 		}
 		room_number = cc.connected_room.room_number;
 
-		free(cr_buffer.data);
-		free(cc_buffer.data);
+		cleanup_buffer(&cr_buffer);
+		cleanup_buffer(&cc_buffer);
+	}
+	if (status == CONFIRMATION_FAILURE) {
+		printf("Server says confirmation failure\n");
+		close(clisockfd);
+		pthread_exit(NULL);
 	}
 	printf("Server says confirmation success\n");
-		
-
-
 
 	// get room node
 	ROOM* room = find_room(room_number);
@@ -717,9 +717,6 @@ int main(int argc, char *argv[])
 	int offset;
 	int nrcv;
 
-	// TODO: Remove this
-	mock_server_state();
-
 	while(1) {
 		offset = 0;
 		
@@ -780,7 +777,6 @@ int main(int argc, char *argv[])
 			error("ERROR creating a new thread");
 		}
 	}
-	printf("exiting.....\n");
 	close(sockfd);
 
 	return 0; 
