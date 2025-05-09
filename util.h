@@ -17,6 +17,8 @@ typedef struct _Buffer {
 
 
 char* trim_whitespace(char *str);
+int is_number(char* str);
+
 void error(const char *msg);
 void print_server_addr(struct sockaddr_in* serv_addr);
 void print_hex(const unsigned char* buffer, size_t len);

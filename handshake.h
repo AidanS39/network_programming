@@ -32,7 +32,8 @@
 typedef enum _ConnectionRequestType {
 	JOIN_ROOM,
 	CREATE_NEW_ROOM,
-	SELECT_ROOM
+	SELECT_ROOM,
+	CANCEL_HANDSHAKE
 } ConnectionRequestType;
 
 
@@ -83,9 +84,8 @@ void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer,
 char* username);
 int init_connection_request_struct(ConnectionRequestType type, int room_number,
 ConnectionRequest *cr, char* username);
-int set_username(ConnectionRequest *cr, char* username);
-int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char*
-username);
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username);
+
 // SERIALIZATION
 
 size_t serialize_connection_request(Buffer* cr_buffer, ConnectionRequest *cr);

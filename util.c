@@ -32,6 +32,17 @@ char* trim_whitespace(char *str_start) {
     return str_start;
 }
 
+// checks if a string is a number
+int is_number(char* str) {
+	for (size_t i = 0; i < strlen(str); i++) {
+		if (!isdigit(str[i])) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+
 
 void error(const char *msg)
 {

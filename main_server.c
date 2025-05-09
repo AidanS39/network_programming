@@ -87,8 +87,8 @@ void initiate_client_handshake(int sockfd, ConnectionRequest* cr, size_t cr_buff
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
-void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
-void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_select_room_request(ConnectionConfirmation* cc);
+void handle_invalid_request(ConnectionConfirmation* cc);
 
 void mock_server_state();
 
@@ -473,6 +473,7 @@ int cc_set_available_rooms(ConnectionConfirmation* cc) {
 
 
 void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	// check if room number is valid
 	ROOM* requested_room = find_room(cr->room_number);
 
 	if (requested_room != NULL) { // room exists
@@ -504,7 +505,7 @@ void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionReques
 	cc->connected_room.num_connected_clients = new_room->num_connected_clients;
 }
 
-void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+void handle_select_room_request(ConnectionConfirmation* cc) {
 	// status
 	cc->status = CONFIRMATION_PENDING;
 	// connected room
@@ -514,7 +515,7 @@ void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* c
 	cc_set_available_rooms(cc);
 }
 
-void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+void handle_invalid_request(ConnectionConfirmation* cc) {
 	cc->status = CONFIRMATION_FAILURE;
 	cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
 	cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
@@ -534,11 +535,12 @@ int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* 
 			if (server_state.num_rooms == 0) { // no available rooms so create one
 				handle_create_new_room_request(cc, cr, clisockfd);
 			} else { // there are available rooms so select one
-				handle_select_room_request(cc, cr, clisockfd);
+				handle_select_room_request(cc);
 			}
 			break;
 		default:
-			handle_invalid_request(cc, cr, clisockfd);
+			// including when the client cancels the handshake
+			handle_invalid_request(cc);
 			break;
 	}
 	return 0;
@@ -899,27 +901,37 @@ int main()
 		}
 		
 		/*================================HANDSHAKE================================*/
+		// TODO: send to separate thread
 		// retrieve room_number and username from client
 		Buffer cr_buffer;
 		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
-
-		// client sends connection request server processes it into a ConnectionRequest struct
-		nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
 		ConnectionRequest cr;
-		deserialize_connection_request(&cr, &cr_buffer);
-		// print_connection_request_struct(&cr);
 
-		// Process the connection request and generate a connection confirmation in response
-		// generate connection confirmation from connection request
-		ConnectionConfirmation cc;
-		init_connection_confirmation(&cc, &cr, newsockfd);
-		// serialize connection confirmation
 		Buffer cc_buffer;
 		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
-		serialize_connection_confirmation(&cc_buffer, &cc);
-		// send the confirmation to the client
-		send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
+		ConnectionConfirmation cc;
+
+		int handshake_complete = 0;
+		while (handshake_complete == 0) {
+			// client sends connection request server processes it into a ConnectionRequest struct
+			nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
+			if (nrcv < 0) error("ERROR recv() failed");
+			deserialize_connection_request(&cr, &cr_buffer);
+			// print_connection_request_struct(&cr);
+
+			// Process the connection request and generate a connection confirmation in response
+			// generate connection confirmation from connection request
+			init_connection_confirmation(&cc, &cr, newsockfd);
+			// serialize connection confirmation
+			serialize_connection_confirmation(&cc_buffer, &cc);
+
+			if (cc.status != CONFIRMATION_PENDING) {
+				handshake_complete = 1;
+			}
+
+			// send the confirmation to the client
+			send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
+		}
 
 		// Make sure to clean up the buffer
 		cleanup_buffer(&cr_buffer);

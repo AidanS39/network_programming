@@ -93,6 +93,9 @@ int receive_file(char* buffer, int sockfd) {
 	response[1] = '\0';
 
 	int n = send(sockfd, response, 1, 0);
+	if (n < 0) {
+		error("ERROR sending file approval");
+	}
 
 	// receive file
 
