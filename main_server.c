@@ -16,6 +16,7 @@
 
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
+#define MAX_FILENAME_LEN 64
 #define BUFFER_SIZE 256
 #define BACKLOG 5
 #define JOINED 1
@@ -60,7 +61,12 @@ typedef struct _ROOM {
 ROOM* room_head = NULL;
 ROOM* room_tail = NULL;
 
-
+typedef struct _FileTransferThreadArgs {
+	char recv_user[MAX_USERNAME_LEN];
+	char file_name[MAX_FILENAME_LEN];
+	ROOM* room;
+	USR* send_user;
+} FileTransferThreadArgs;
 
 ROOM* create_room();
 void remove_room(int room_number);
@@ -570,13 +576,155 @@ void print_rooms_with_clients() {
 	}
 }
 
+USR* find_client_by_username(ROOM* room, char* username) {
+	USR* cur = room->usr_head;
 
+	while (cur != NULL) {
+		if (strncmp(cur->username, username, MAX_USERNAME_LEN) == 0) {
+			break;
+		}
+		cur = cur->next;
+	}
+	// if client does not exist, NULL is returned
+	return cur;
+}
+
+int is_filetransfer(char* buffer) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	// determine if first token in message is "SEND"
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	// if there are no more tokens, return false (0)
+	if (send_token == NULL) {
+		return 0;
+	}
+	// if yes, return true (1)
+	else if (strncmp(send_token, "SEND", strlen(send_token)) == 0) {
+		return 1;
+	}
+	// if no, return false (0)
+	else {
+		return 0;
+	}
+}
+
+FileTransferThreadArgs* init_FTthread_args(char* recv_user, char* file_name, ROOM* room, USR* send_user) {
+
+	// prepare ThreadArgs structure to pass client socket
+	FileTransferThreadArgs* args = (FileTransferThreadArgs*)
+	malloc(sizeof(FileTransferThreadArgs));
+	if (args == NULL) error("ERROR creating FT thread arguments");
+	
+	// set recv username
+	strncpy(args->recv_user, recv_user, MAX_USERNAME_LEN);
+	
+	// set file name
+	strncpy(args->file_name, file_name, MAX_FILENAME_LEN);
+	
+	// set room
+	args->room = room;
+	
+	// set sending client
+	args->send_user = send_user;
+
+	return args;
+}
+
+void print_thread_args(char* recv_user, char* file_name) {
+	printf("Receiving user: %s\n", recv_user);
+	printf("File name: %s\n", file_name);
+}
+
+void* thread_file_transfer(void* args) {
+	// get thread arguments
+	char recv_user[MAX_USERNAME_LEN];
+	strncpy(recv_user, ((FileTransferThreadArgs*) args)->recv_user, MAX_USERNAME_LEN);
+	char file_name[MAX_FILENAME_LEN];
+	strncpy(file_name, ((FileTransferThreadArgs*) args)->file_name, MAX_FILENAME_LEN);
+	ROOM* room = ((FileTransferThreadArgs*) args)->room;
+	USR* send_user = ((FileTransferThreadArgs*) args)->send_user;
+	// free argument memory
+	free(args);
+	
+	// TEST print statement
+	print_thread_args(recv_user, file_name);
+	
+	// find client by username
+	USR* recv_client = find_client_by_username(room, recv_user);
+	if (recv_client == NULL) {
+		printf("receiving client not found\n");
+		pthread_exit(NULL);
+	}
+	printf("receiving client found!\n");
+
+	int recvsockfd = recv_client->clisockfd;
+	// TODO: all this in this order (ask me why)
+	
+	// receive file from sending client (somehow...?)
+		
+	// notify receiving user of file transfer, ask for permission "Y/N"
+	char buffer[BUFFER_SIZE];
+	memset(buffer, 0, BUFFER_SIZE);
+	sprintf(buffer, "SEND %s %s", send_user->username, file_name);
+	send(recvsockfd, buffer, BUFFER_SIZE, 0);
+	
+	// receive response from receiving user
+	memset(buffer, 0, BUFFER_SIZE);
+	recv(recvsockfd, buffer, BUFFER_SIZE, 0);
+
+	// if recv user denies
+	if (buffer[0] != 'Y') {
+		// TODO: maybe return status code of DENIED or something like that?
+	}
+	// if recv user agrees
+	else {
+		// send file to receiving client (somehow...?)
+	}
+
+	pthread_exit(NULL);
+}
+
+int transfer_file(char* buffer, ROOM* room, USR* send_user) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	if (send_token == NULL) {
+		return -1;
+	}
+	char* recv_user = strtok_r(NULL, " ", &saveptr);
+	if (recv_user == NULL) {
+		return -1;
+	}
+	char* file_name = strtok_r(NULL, " ", &saveptr);
+	if (file_name == NULL) {
+		return -1;
+	}
+	
+	// initialize file transfer thread arguments
+	FileTransferThreadArgs* args = init_FTthread_args(recv_user, file_name, room, send_user);
+
+	// create file transferring thread
+	pthread_t file_tid;
+	if (pthread_create(&file_tid, NULL, thread_file_transfer, (void*) args) != 0) {
+		error("ERROR creating a file transfer thread");
+	}
+	
+	// wait for file transferring thread to finish
+	pthread_join(file_tid, NULL);
+
+	return 0;
+}
 
 void* thread_main(void* args)
 {
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
-
 
 	// get socket descriptor from argument
 	ConfirmationStatus status = ((ThreadArgs*) args)->status;
@@ -659,14 +807,21 @@ void* thread_main(void* args)
 
 	nrcv = recv(clisockfd, buffer, 255, 0);
 	if (nrcv < 0) error("ERROR recv() failed first recv");
-
+	
 	while (nrcv > 0 && buffer[0] != '\n') {
-		// we send the message to everyone except the sender
-		broadcast(room, clisockfd, username, color_code, buffer);
-
-			memset(buffer, 0, 256);
-			nrcv = recv(clisockfd, buffer, 255, 0);
-			if (nrcv < 0) error("ERROR recv() failed in while loop");
+		if (is_filetransfer(buffer)) {
+			// transfer file
+			if (transfer_file(buffer, room, client) == -1) {
+				// send invalid format message to sending user
+				printf("File transfer failed.\n");
+			}
+		} else {
+			// we send the message to everyone except the sender
+			broadcast(room, clisockfd, username, color_code, buffer);
+		}
+		memset(buffer, 0, 256);
+		nrcv = recv(clisockfd, buffer, 255, 0);
+		if (nrcv < 0) error("ERROR recv() failed in while loop");
 	}
 
 	remove_client(room, clisockfd);
@@ -692,7 +847,7 @@ ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int new
 
 	// prepare ThreadArgs structure to pass client socket
 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	if (args == NULL) error("ERROR creating thread argument");
+	if (args == NULL) error("ERROR creating thread arguments");
 	
 	args->status = cc->status;
 	// set room_number

@@ -29,6 +29,7 @@ typedef struct _ThreadArgs {
 } ThreadArgs;
 
 void init_username();
+int is_filetransfer(char* buffer);
 void* thread_main_recv(void* args);
 void* thread_main_send(void* args);
 
@@ -40,6 +41,90 @@ void init_username() {
 	} else {
 		error("Invalid username.");
 	}
+}
+
+// NOTE: can (and should) be used for both send and receive
+int is_filetransfer(char* buffer) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	// determine if first token in message is "SEND"
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	// if there are no more tokens, return false (0)
+	if (send_token == NULL) {
+		return 0;
+	}
+	// if yes, return true (1)
+	else if (strncmp(send_token, "SEND", strlen(send_token)) == 0) {
+		return 1;
+	}
+	// if no, return false (0)
+	else {
+		return 0;
+	}
+}
+
+int receive_file(char* buffer, int sockfd) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	if (send_token == NULL) {
+		return -1;
+	}
+	char* send_user = strtok_r(NULL, " ", &saveptr);
+	if (send_user == NULL) {
+		return -1;
+	}
+	char* file_name = strtok_r(NULL, " ", &saveptr);
+	if (file_name == NULL) {
+		return -1;
+	}
+	
+	printf("%s wants to send a file %s to you. Receive? [Y/N]: ", send_user, file_name);
+	
+	// send approval or denial to server
+	char response[2];
+	response[0] = (char)fgetc(stdin);
+	response[1] = '\0';
+
+	int n = send(sockfd, response, 1, 0);
+
+	// receive file
+
+	return 0;
+}
+
+// sends file to server to send to receiving client
+// returns status of file transfer (success, fail, other?)
+int send_file(char* buffer, int sockfd) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	if (send_token == NULL) {
+		return -1;
+	}
+	char* recv_user = strtok_r(NULL, " ", &saveptr);
+	if (recv_user == NULL) {
+		return -1;
+	}
+	char* file_name = strtok_r(NULL, " ", &saveptr);
+	if (file_name == NULL) {
+		return -1;
+	}
+
+	// open file
+
+	// send file to server
+
+	return 0;
 }
 
 // TODO: revisit when dealing with messages cleanly and use Buffer struct
@@ -69,7 +154,15 @@ void* thread_main_recv(void* args)
 			pthread_mutex_unlock(&csm->connection_status_mutex);
 			break;
 		default:
-			printf("\n%s\n", buffer);
+			// TODO: receive file
+			if (is_filetransfer(buffer)) {
+				if (receive_file(buffer, sockfd) == -1) {
+					error("ERROR receiving file");
+				}
+			}
+			else {
+				printf("\n%s\n", buffer);
+			}
 
 			while (n > 0) {
 				memset(buffer, 0, BUFFER_SIZE);
@@ -85,7 +178,15 @@ void* thread_main_recv(void* args)
 						pthread_mutex_unlock(&csm->connection_status_mutex);
 						break;
 					default:
-						printf("\n%s\n", buffer);
+						if (is_filetransfer(buffer)) {
+							// TODO: receive file
+							if (receive_file(buffer, sockfd) == -1) {
+								error("ERROR receiving file");
+							}
+						}
+						else {
+							printf("\n%s\n", buffer);
+						}
 				}
 			}
 	}
@@ -116,6 +217,13 @@ void* thread_main_send(void* args)
 			error("ERROR writing to socket");
 		} else if (n == 0 && strlen(buffer) != 0) {
 			error("(probably) ERROR writing to socket");
+		}
+		
+		if (is_filetransfer(buffer)) {
+			// TODO: send file
+			if (send_file(buffer, sockfd) == -1) {
+				error("ERROR sending file");
+			}
 		}
 
 		// Handle user manual disconnect
