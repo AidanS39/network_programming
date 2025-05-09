@@ -102,7 +102,6 @@ void init_server_state();
 
 void clean_up();
 
-// ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd);
 ThreadArgs* init_thread_args(int newsockfd);
 
 void init_server_state() {
@@ -851,23 +850,6 @@ void* thread_main(void* args)
 
 	return NULL;
 }
-
-// ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd) {
-
-// 	// prepare ThreadArgs structure to pass client socket
-// 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-// 	if (args == NULL) error("ERROR creating thread arguments");
-	
-// 	args->status = cc->status;
-// 	// set room_number
-// 	args->room_number = cc->connected_room.room_number;
-// 	// set username
-// 	strncpy(args->username, username, MAX_USERNAME_LEN);
-// 	// set socket file descriptor
-// 	args->clisockfd = newsockfd;
-
-// 	return args;
-// }
 
 ThreadArgs* init_thread_args(int newsockfd) {
 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
