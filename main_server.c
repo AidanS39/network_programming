@@ -35,12 +35,14 @@ typedef struct _ServerState {
 ServerState server_state;
 
 
-
-typedef struct _ThreadArgs {
+typedef struct _HandshakeResult {
 	ConfirmationStatus status;
 	char username[MAX_USERNAME_LEN];
-	int clisockfd;
 	int room_number;
+} HandshakeResult;
+
+typedef struct _ThreadArgs {
+	int clisockfd;
 } ThreadArgs;
 
 typedef struct _USR {
@@ -82,7 +84,7 @@ void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
 void print_rooms_with_clients();
 
-void initiate_client_handshake(int sockfd, ConnectionRequest* cr, size_t cr_buffer_size);
+HandshakeResult execute_handshake(int clisockfd);
 
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
@@ -100,8 +102,8 @@ void init_server_state();
 
 void clean_up();
 
-ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd);
-
+// ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd);
+ThreadArgs* init_thread_args(int newsockfd);
 
 void init_server_state() {
 	pthread_mutex_init(&server_state.server_state_mutex, NULL);
@@ -728,13 +730,18 @@ void* thread_main(void* args)
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
 
+
+
 	// get socket descriptor from argument
-	ConfirmationStatus status = ((ThreadArgs*) args)->status;
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
-	char username[MAX_USERNAME_LEN];
-	strncpy(username, ((ThreadArgs*) args)->username, MAX_USERNAME_LEN);
-	int room_number = ((ThreadArgs*) args)->room_number;
 	free(args);
+
+	HandshakeResult handshake_result = execute_handshake(clisockfd);
+	ConfirmationStatus status = handshake_result.status;
+	char username[MAX_USERNAME_LEN];
+	strncpy(username, handshake_result.username, MAX_USERNAME_LEN);
+	int room_number = handshake_result.room_number;
+
 	
 	if (status == CONFIRMATION_PENDING) {
 		// keep sending confirmations until the handshake succeeds or fails
@@ -845,21 +852,75 @@ void* thread_main(void* args)
 	return NULL;
 }
 
-ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd) {
+// ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd) {
 
-	// prepare ThreadArgs structure to pass client socket
+// 	// prepare ThreadArgs structure to pass client socket
+// 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+// 	if (args == NULL) error("ERROR creating thread arguments");
+	
+// 	args->status = cc->status;
+// 	// set room_number
+// 	args->room_number = cc->connected_room.room_number;
+// 	// set username
+// 	strncpy(args->username, username, MAX_USERNAME_LEN);
+// 	// set socket file descriptor
+// 	args->clisockfd = newsockfd;
+
+// 	return args;
+// }
+
+ThreadArgs* init_thread_args(int newsockfd) {
 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
 	if (args == NULL) error("ERROR creating thread arguments");
-	
-	args->status = cc->status;
-	// set room_number
-	args->room_number = cc->connected_room.room_number;
-	// set username
-	strncpy(args->username, username, MAX_USERNAME_LEN);
-	// set socket file descriptor
 	args->clisockfd = newsockfd;
-
 	return args;
+}
+
+
+
+HandshakeResult execute_handshake(int clisockfd) {
+	/*================================HANDSHAKE================================*/
+	// retrieve room_number and username from client
+	Buffer cr_buffer;
+	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+	ConnectionRequest cr;
+
+	Buffer cc_buffer;
+	init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
+	ConnectionConfirmation cc;
+
+	int handshake_complete = 0;
+	while (handshake_complete == 0) {
+		// client sends connection request server processes it into a ConnectionRequest struct
+		int nrcv = recv(clisockfd, cr_buffer.data, cr_buffer.size, 0);
+		if (nrcv < 0) error("ERROR recv() failed");
+		deserialize_connection_request(&cr, &cr_buffer);
+		// print_connection_request_struct(&cr);
+
+		// Process the connection request and generate a connection confirmation in response
+		// generate connection confirmation from connection request
+		init_connection_confirmation(&cc, &cr, clisockfd);
+		// serialize connection confirmation
+		serialize_connection_confirmation(&cc_buffer, &cc);
+
+		if (cc.status != CONFIRMATION_PENDING) {
+			handshake_complete = 1;
+		}
+
+		// send the confirmation to the client
+		send(clisockfd, cc_buffer.data, cc_buffer.size, 0);
+	}
+
+	// Make sure to clean up the buffer
+	cleanup_buffer(&cr_buffer);
+	cleanup_buffer(&cc_buffer);
+
+	// return struct with confirmation status, room number, and username
+	HandshakeResult handshake_result;
+	handshake_result.status = cc.status;
+	handshake_result.room_number = cc.connected_room.room_number;
+	strncpy(handshake_result.username, cr.username, MAX_USERNAME_LEN);
+	return handshake_result;
 }
 
 int main()
@@ -887,8 +948,6 @@ int main()
 
 	listen(sockfd, BACKLOG); // maximum number of connections = 5
 	
-	int nrcv;
-
 	while(1) {
 		
 		struct sockaddr_in cli_addr;
@@ -900,47 +959,9 @@ int main()
 			error("ERROR on accept");
 		}
 		
-		/*================================HANDSHAKE================================*/
-		// TODO: send to separate thread
-		// retrieve room_number and username from client
-		Buffer cr_buffer;
-		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
-		ConnectionRequest cr;
-
-		Buffer cc_buffer;
-		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
-		ConnectionConfirmation cc;
-
-		int handshake_complete = 0;
-		while (handshake_complete == 0) {
-			// client sends connection request server processes it into a ConnectionRequest struct
-			nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
-			if (nrcv < 0) error("ERROR recv() failed");
-			deserialize_connection_request(&cr, &cr_buffer);
-			// print_connection_request_struct(&cr);
-
-			// Process the connection request and generate a connection confirmation in response
-			// generate connection confirmation from connection request
-			init_connection_confirmation(&cc, &cr, newsockfd);
-			// serialize connection confirmation
-			serialize_connection_confirmation(&cc_buffer, &cc);
-
-			if (cc.status != CONFIRMATION_PENDING) {
-				handshake_complete = 1;
-			}
-
-			// send the confirmation to the client
-			send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
-		}
-
-		// Make sure to clean up the buffer
-		cleanup_buffer(&cr_buffer);
-		cleanup_buffer(&cc_buffer);
-
 		/*=================SET THREAD ARGS=============================*/
-		
-		
-		ThreadArgs* args = init_thread_args(&cc, cr.username, newsockfd);
+		// ThreadArgs* args = init_thread_args(&cc, cr.username, newsockfd);
+		ThreadArgs* args = init_thread_args(newsockfd);
 
 		pthread_t tid;
 		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
