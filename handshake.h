@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "util.h"
 
@@ -46,7 +50,8 @@ typedef struct _ConnectionRequest {
 typedef enum _ConfirmationStatus {
 	CONFIRMATION_SUCCESS, // client successfully joined a room
 	CONFIRMATION_PENDING, // server wants more information from client before connecting them
-	CONFIRMATION_FAILURE // client requested an invalid operation
+	CONFIRMATION_FAILURE, // client requested an invalid operation
+	CONFIRMATION_SUCCESS_NEW // client successfully joined a new room
 } ConfirmationStatus;
 
 // basic information regarding a single room on the server
@@ -73,7 +78,7 @@ typedef struct _ConnectionConfirmation {
 
 /* ---------------------------------------- CONNECTION REQUEST ---------------------------------------- */
 
-int perform_handshake(int sockfd, Buffer* cr_buffer, char* username);
+int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username);
 void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer,
 char* username);
 int init_connection_request_struct(ConnectionRequestType type, int room_number,

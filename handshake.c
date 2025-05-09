@@ -6,7 +6,7 @@
 
 // sends a ConnectionRequest struct to the server and receives a ConnectionConfirmation struct in return
 // until the server confirms or denies the connection
-int perform_handshake(int sockfd, Buffer* cr_buffer, char* username)
+int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username)
 {
 	int n = send(sockfd, cr_buffer->data, cr_buffer->size, 0);
 	if (n < 0) error("ERROR writing to socket");
@@ -25,12 +25,20 @@ int perform_handshake(int sockfd, Buffer* cr_buffer, char* username)
 		// print_connection_confirmation(&cc);
 		if (cc.status == CONFIRMATION_SUCCESS) {
 			break;
+		} else if (cc.status == CONFIRMATION_SUCCESS_NEW) {
+			// is this getting the server or client ipv4?
+			printf("Connected to %s with new room number %d\n",
+			inet_ntoa(serv_addr->sin_addr),
+			cc.connected_room.room_number);
+			break;
 		} else if (cc.status == CONFIRMATION_PENDING) {
-			printf("Server says pending confirmation\n");
 			handle_pending_confirmation(sockfd, &cc, username);
 		} else {
 			cleanup_buffer(&cc_buffer);
-			error("ERROR: Connection confirmation status is invalid");
+			// TODO: should we error(), or keep it printf()? Technically not an
+			// error, an invalid room choice was made.
+			printf("An invalid room number was chosen, or the room chosen does not exist.\nExiting...\n");
+			exit(EXIT_SUCCESS);
 		}
 		memset(cc_buffer.data, 0, cc_buffer.size);
 	}
@@ -112,8 +120,7 @@ int set_username(ConnectionRequest *cr, char* username)
 // if the client sends a request without a room number or asking for a new room, the server will send back a pending confirmation
 // this function handles that by displaying the prompt for a user to select a room
 // and sending the user's choice back to the server
-int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char*
-username) {
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username) {
 	// display the prompt for a user to select a room
 	print_room_selection_prompt(cc);
 	

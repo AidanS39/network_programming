@@ -187,8 +187,7 @@ int main(int argc, char *argv[])
 	pthread_t tid_send;
 	ThreadArgs* args; // reuse for both threads
 	
-	// TODO: loop until handshake is successful
-	perform_handshake(sockfd, &cr_buffer, username);
+	perform_handshake(sockfd, &serv_addr, &cr_buffer, username);
 	cleanup_buffer(&cr_buffer);
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));

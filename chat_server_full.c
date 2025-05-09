@@ -487,7 +487,7 @@ void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr,
 
 void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
 	// status
-	cc->status = CONFIRMATION_SUCCESS;
+	cc->status = CONFIRMATION_SUCCESS_NEW;
 	// create and connect room
 	ROOM* new_room = create_room();
 	add_client(new_room, clisockfd, cr->username);
