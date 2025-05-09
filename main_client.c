@@ -28,10 +28,19 @@ typedef struct _ThreadArgs {
 	ConnectionStatusMonitor* csm;
 } ThreadArgs;
 
-
+void init_username();
 void* thread_main_recv(void* args);
 void* thread_main_send(void* args);
 
+// sets the global username. only should be called once (for threading)
+void init_username() {
+	printf("Type your username: ");
+	if (fgets(username, MAX_USERNAME_LEN - 1, stdin) != NULL) {
+		trim_whitespace(username);
+	} else {
+		error("Invalid username.");
+	}
+}
 
 // TODO: revisit when dealing with messages cleanly and use Buffer struct
 void* thread_main_recv(void* args)
@@ -119,16 +128,6 @@ void* thread_main_send(void* args)
 		}
 	}
 	return NULL;
-}
-
-// sets the global username. only should be called once (for threading)
-void init_username() {
-	printf("Type your username: ");
-	if (fgets(username, MAX_USERNAME_LEN - 1, stdin) != NULL) {
-		trim_whitespace(username);
-	} else {
-		error("Invalid username.");
-	}
 }
 
 int main(int argc, char *argv[])

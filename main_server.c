@@ -94,6 +94,8 @@ void init_server_state();
 
 void clean_up();
 
+ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd);
+
 
 void init_server_state() {
 	pthread_mutex_init(&server_state.server_state_mutex, NULL);
@@ -619,11 +621,11 @@ void* thread_main(void* args)
 		cleanup_buffer(&cc_buffer);
 	}
 	if (status == CONFIRMATION_FAILURE) {
-		printf("Server says confirmation failure\n");
+		// printf("Server says confirmation failure\n");
 		close(clisockfd);
 		pthread_exit(NULL);
 	}
-	printf("Server says confirmation success\n");
+	// printf("Server says confirmation success\n");
 
 	// get room node
 	ROOM* room = find_room(room_number);
@@ -644,14 +646,14 @@ void* thread_main(void* args)
 	printf("Connected: %s (%s)\n", username, inet_ntoa(addr.sin_addr));
 	
 	// print the updated list of clients
-	// print_client_list(room);
+	print_client_list(room);
 	
 	// announce to room that client joined
 	announce_status(room, clisockfd, username, JOINED);
 	//-------------------------------
 	// Now, we receive/send messages
 	char buffer[256];
-	int nsen, nrcv;
+	int nrcv;
 
 	memset(buffer, 0, 256);
 
@@ -686,9 +688,24 @@ void* thread_main(void* args)
 	return NULL;
 }
 
+ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd) {
 
+	// prepare ThreadArgs structure to pass client socket
+	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+	if (args == NULL) error("ERROR creating thread argument");
+	
+	args->status = cc->status;
+	// set room_number
+	args->room_number = cc->connected_room.room_number;
+	// set username
+	strncpy(args->username, username, MAX_USERNAME_LEN);
+	// set socket file descriptor
+	args->clisockfd = newsockfd;
 
-int main(int argc, char *argv[])
+	return args;
+}
+
+int main()
 {
 	init_server_state();
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -713,12 +730,9 @@ int main(int argc, char *argv[])
 
 	listen(sockfd, BACKLOG); // maximum number of connections = 5
 	
-	char buffer[BUFFER_SIZE];
-	int offset;
 	int nrcv;
 
 	while(1) {
-		offset = 0;
 		
 		struct sockaddr_in cli_addr;
 		socklen_t clen = sizeof(cli_addr);
@@ -729,7 +743,6 @@ int main(int argc, char *argv[])
 			error("ERROR on accept");
 		}
 		
-		// TODO: put handshake logic in a separate thread and function
 		/*================================HANDSHAKE================================*/
 		// retrieve room_number and username from client
 		Buffer cr_buffer;
@@ -740,7 +753,7 @@ int main(int argc, char *argv[])
 		if (nrcv < 0) error("ERROR recv() failed");
 		ConnectionRequest cr;
 		deserialize_connection_request(&cr, &cr_buffer);
-		print_connection_request_struct(&cr);
+		// print_connection_request_struct(&cr);
 
 		// Process the connection request and generate a connection confirmation in response
 		// generate connection confirmation from connection request
@@ -755,22 +768,12 @@ int main(int argc, char *argv[])
 
 		// Make sure to clean up the buffer
 		cleanup_buffer(&cr_buffer);
-		// TODO: Move this till after you send it
 		cleanup_buffer(&cc_buffer);
 
 		/*=================SET THREAD ARGS=============================*/
 		
-		// prepare ThreadArgs structure to pass client socket
-		ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-		if (args == NULL) error("ERROR creating thread argument");
 		
-		args->status = cc.status;
-		// set room_number
-		args->room_number = cc.connected_room.room_number;
-		// set username
-		strncpy(args->username, cr.username, MAX_USERNAME_LEN);
-		// set socket file descriptor
-		args->clisockfd = newsockfd;
+		ThreadArgs* args = init_thread_args(&cc, cr.username, newsockfd);
 
 		pthread_t tid;
 		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
