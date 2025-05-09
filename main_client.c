@@ -89,6 +89,7 @@ int receive_file(char* buffer, int sockfd) {
 	
 	// send approval or denial to server
 	char response[2];
+	// TODO: check whole string not just first character
 	response[0] = (char)fgetc(stdin);
 	response[1] = '\0';
 
@@ -213,6 +214,7 @@ void* thread_main_send(void* args)
 		// console or GUI to have a nice input window.
 		//printf("\nPlease enter the message: ");
 		memset(buffer, 0, BUFFER_SIZE);
+		// blocks until user enters a message
 		fgets(buffer, BUFFER_SIZE - 1, stdin);
 
 		n = send(sockfd, buffer, strlen(buffer), 0);

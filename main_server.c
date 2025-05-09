@@ -380,6 +380,7 @@ int get_color_code(ROOM* room, USR* client) {
 
 	return random_color_code;
 }
+
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message)
 {
 	// figure out sender address
@@ -728,8 +729,6 @@ void* thread_main(void* args)
 {
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
-
-
 
 	// get socket descriptor from argument
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
