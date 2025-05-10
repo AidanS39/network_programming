@@ -8,6 +8,7 @@
 #include "util.h"
 #include "connection_status_monitor.h"
 #include "socket_setup.h"
+#include "file_transfer.h"
 
 #define BUFFER_SIZE 512
 #define EXIT_COMMAND "\n"
@@ -23,13 +24,18 @@
 // global username variable
 char username[MAX_USERNAME_LEN];
 
+// global room number variable
+int32_t global_room_number;
+
 typedef struct _ThreadArgs {
 	int clisockfd;
 	ConnectionStatusMonitor* csm;
 } ThreadArgs;
 
+
 void init_username();
 int is_filetransfer(char* buffer);
+
 void* thread_main_recv(void* args);
 void* thread_main_send(void* args);
 
@@ -126,7 +132,7 @@ int send_file(char* buffer, int sockfd) {
 
 	// open file
 
-	// send file to server
+	// sead_create(&tid_send_file, NULL, thread_main_send_file, (void*) args);
 
 	return 0;
 }
@@ -217,19 +223,48 @@ void* thread_main_send(void* args)
 		// blocks until user enters a message
 		fgets(buffer, BUFFER_SIZE - 1, stdin);
 
-		n = send(sockfd, buffer, strlen(buffer), 0);
-		if (n < 0) {
-			error("ERROR writing to socket");
-		} else if (n == 0 && strlen(buffer) != 0) {
-			error("(probably) ERROR writing to socket");
-		}
-		
 		if (is_filetransfer(buffer)) {
-			// TODO: send file
-			if (send_file(buffer, sockfd) == -1) {
-				error("ERROR sending file");
+			// create FTRequest
+			FTRequest* ft_req = create_ft_request(buffer, sockfd, username, &global_room_number, CLIENT_INITIATED);
+			assert(ft_req != NULL);
+
+			// Blocks until server sends FTConfirmation
+			FTConfirmation* ft_conf = send_server_file_transfer_request(ft_req, sockfd);
+			assert(ft_conf != NULL);
+
+			print_ft_confirmation(ft_conf);
+			assert(0);
+
+			// cleanup FTRequest
+			free(ft_req);
+			ft_req = NULL;
+
+			printf("File transfer confirmation received from server: %d\n", ft_conf->status);
+
+			if (ft_conf->status == ACCEPTED) {
+				printf("File transfer request accepted\n");
+
+				// TODO: send file
+				// if (send_file(buffer, sockfd) == -1) {
+				// 	error("ERROR sending file");
+				// }
+
+			}
+
+			// cleanup FTConfirmation
+			free(ft_conf);
+			ft_conf = NULL;
+
+		} else {
+			n = send(sockfd, buffer, strlen(buffer), 0);
+			if (n < 0) {
+				error("ERROR writing to socket");
+			} else if (n == 0 && strlen(buffer) != 0) {
+				error("(probably) ERROR writing to socket");
 			}
 		}
+
+		
 
 		// Handle user manual disconnect
 		if ((strncmp(buffer, EXIT_COMMAND, strlen(EXIT_COMMAND)) == 0)) {
@@ -299,7 +334,7 @@ int main(int argc, char *argv[])
 	pthread_t tid_send;
 	ThreadArgs* args; // reuse for both threads
 	
-	perform_handshake(sockfd, &serv_addr, &cr_buffer, username);
+	perform_handshake(sockfd, &serv_addr, &cr_buffer, username, &global_room_number);
 	cleanup_buffer(&cr_buffer);
 	
 	args = (ThreadArgs*) malloc(sizeof(ThreadArgs));

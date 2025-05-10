@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 
+#define MAX_USERNAME_LEN 32
+#define MAX_FILENAME_LEN 64
+
 typedef struct _Buffer {
 	unsigned char* data;
 	size_t size;

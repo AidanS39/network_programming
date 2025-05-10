@@ -12,7 +12,6 @@
 
 #include "util.h"
 
-#define MAX_USERNAME_LEN 32
 #define MAX_ROOMS 8
 #define UNINITIALIZED_ROOM_NUMBER -1
 #define UNINITIALIZED_NUM_CONNECTED_CLIENTS -1
@@ -79,12 +78,12 @@ typedef struct _ConnectionConfirmation {
 
 /* ---------------------------------------- CONNECTION REQUEST ---------------------------------------- */
 
-int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username);
+int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username, int32_t* global_room_number);
 void prepare_connection_request(int argc, char* room_arg, Buffer* cr_buffer,
 char* username);
 int init_connection_request_struct(ConnectionRequestType type, int room_number,
 ConnectionRequest *cr, char* username);
-int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username);
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username, int32_t* global_room_number);
 
 // SERIALIZATION
 

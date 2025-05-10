@@ -13,10 +13,8 @@
 
 #include "handshake.h"
 #include "util.h"
-
+#include "file_transfer.h"
 #define PORT_NUM 1004
-#define MAX_USERNAME_LEN 32
-#define MAX_FILENAME_LEN 64
 #define BUFFER_SIZE 256
 #define BACKLOG 5
 #define JOINED 1
@@ -76,6 +74,7 @@ ROOM* find_room(int room_number);
 void add_client(ROOM* room, int newclisockfd, char* username);
 void remove_client(ROOM* room, int sockfd);
 USR* find_client(ROOM* room, int sockfd);
+
 void print_client_list(ROOM* room);
 void print_room_list();
 int get_color_code(ROOM* room, USR* client);
@@ -91,6 +90,8 @@ void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr,
 void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_select_room_request(ConnectionConfirmation* cc);
 void handle_invalid_request(ConnectionConfirmation* cc);
+
+void send_ft_confirmation_of_failure(FTRequest* ft_req, int sockfd);
 
 void mock_server_state();
 
@@ -593,25 +594,21 @@ USR* find_client_by_username(ROOM* room, char* username) {
 	return cur;
 }
 
-int is_filetransfer(char* buffer) {
-	// create copy of message in buffer (needed for strtok_r)
-	char message[BUFFER_SIZE];
-	strncpy(message, buffer, strlen(buffer));
-	
-	// determine if first token in message is "SEND"
-	char* saveptr;
-	char* send_token = strtok_r(message, " ", &saveptr);
-	// if there are no more tokens, return false (0)
-	if (send_token == NULL) {
-		return 0;
+FTRequest* is_filetransfer(char* buffer) {
+
+	// attempt to deserialize as FTRequest
+	Buffer ft_req_buffer;
+	init_buffer(&ft_req_buffer, sizeof(FTRequest));
+	memcpy(ft_req_buffer.data, buffer, sizeof(FTRequest));
+	FTRequest* ft_req = (FTRequest*) malloc(sizeof(FTRequest));
+	deserialize_ftreq(ft_req, &ft_req_buffer);
+
+	// TODO: not the best way to do this but I'm rushing
+	if (ft_req->ft_identifier == (int32_t) FT_REQUEST_ID) { // valid FTRequest
+		return ft_req;
 	}
-	// if yes, return true (1)
-	else if (strncmp(send_token, "SEND", strlen(send_token)) == 0) {
-		return 1;
-	}
-	// if no, return false (0)
-	else {
-		return 0;
+	else { // invalid FTRequest
+		return NULL;
 	}
 }
 
@@ -725,6 +722,27 @@ int transfer_file(char* buffer, ROOM* room, USR* send_user) {
 	return 0;
 }
 
+void send_ft_confirmation_of_failure(FTRequest* ft_req, int sockfd) {
+	FTConfirmation* ft_conf = (FTConfirmation*) malloc(sizeof(FTConfirmation));
+	ft_conf->status = REJECTED;
+
+	Buffer ft_conf_buffer;
+	init_buffer(&ft_conf_buffer, sizeof(FTConfirmation));
+	serialize_ftconf(&ft_conf_buffer, ft_conf);
+
+	printf("Sending FT confirmation of failure\n");
+	print_hex(ft_conf_buffer.data, ft_conf_buffer.size);
+
+	int n = send(sockfd, ft_conf_buffer.data, ft_conf_buffer.size, 0);
+	if (n < 0) {
+		error("ERROR sending FT confirmation of failure");
+	}
+
+	cleanup_buffer(&ft_conf_buffer);
+	free(ft_conf);
+	ft_conf = NULL;
+}
+
 void* thread_main(void* args)
 {
 	// make sure thread resources are deallocated upon return
@@ -816,12 +834,78 @@ void* thread_main(void* args)
 	if (nrcv < 0) error("ERROR recv() failed first recv");
 	
 	while (nrcv > 0 && buffer[0] != '\n') {
-		if (is_filetransfer(buffer)) {
-			// transfer file
-			if (transfer_file(buffer, room, client) == -1) {
-				// send invalid format message to sending user
-				printf("File transfer failed.\n");
+
+		if (is_filetransfer(buffer) != NULL) {
+			// deserialize as FTRequest
+			Buffer ft_req_buffer;
+			init_buffer(&ft_req_buffer, sizeof(FTRequest));
+			memcpy(ft_req_buffer.data, buffer, sizeof(FTRequest));
+			FTRequest* ft_req = (FTRequest*) malloc(sizeof(FTRequest));
+			deserialize_ftreq(ft_req, &ft_req_buffer);
+
+			// find room where transfer initiator is in
+			ROOM* ft_room = find_room(ft_req->room_number);
+
+			if (ft_room != NULL) { // room found
+				USR* ft_recv_client = find_client_by_username(ft_room, ft_req->receiver_username);
+
+				if (ft_recv_client != NULL) { // receiver client found
+					// Ask for transfer consent
+					// if (send_ft_consent_request(ft_req, ft_recv_client->clisockfd) == NULL) {
+					// 	// TODO: send confirmation of failure
+					// }
+					assert(0);
+
+					FTConfirmation *ft_conf = (FTConfirmation*) malloc(sizeof(FTConfirmation));
+					ft_conf->status = REJECTED;
+
+					// send confirmation to transfer initiator
+					Buffer ft_conf_buffer;
+					init_buffer(&ft_conf_buffer, sizeof(FTConfirmation));
+					serialize_ftconf(&ft_conf_buffer, ft_conf);
+					send(ft_req->sender_sockfd, ft_conf_buffer.data, ft_conf_buffer.size, 0);
+
+					// clean up
+					cleanup_buffer(&ft_req_buffer);
+					cleanup_buffer(&ft_conf_buffer);
+					free(ft_req);
+					ft_req = NULL;
+					free(ft_conf);
+					ft_conf = NULL;
+
+				} else{
+					send_ft_confirmation_of_failure(ft_req, clisockfd);
+				}
+			} else {
+				send_ft_confirmation_of_failure(ft_req, clisockfd);
 			}
+
+
+
+
+
+
+
+			assert(0);
+
+			// ask the receiving user if they want to accept the file transfer
+			FTConfirmation *ft_conf = (FTConfirmation*) malloc(sizeof(FTConfirmation));
+			// ft_recv_get_consent(ft_req, clisockfd, ft_conf);
+		
+			print_ft_confirmation(ft_conf);
+
+			assert(0);
+
+			// // transfer file
+			// if (transfer_file(buffer, room, client) == -1) {
+			// 	// send invalid format message to sending user
+			// 	printf("File transfer failed.\n");
+			// }
+			cleanup_buffer(&ft_req_buffer);
+			free(ft_req);
+			ft_req = NULL;
+			free(ft_conf);
+			ft_conf = NULL;
 		} else {
 			// we send the message to everyone except the sender
 			broadcast(room, clisockfd, username, color_code, buffer);
@@ -842,10 +926,11 @@ void* thread_main(void* args)
 	print_client_list(room);
 	
 	close(clisockfd);
-	
+
 	room = NULL;
 
 	client = NULL;
+
 
 	return NULL;
 }

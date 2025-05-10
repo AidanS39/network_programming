@@ -6,7 +6,7 @@
 
 // sends a ConnectionRequest struct to the server and receives a ConnectionConfirmation struct in return
 // until the server confirms or denies the connection
-int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username)
+int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buffer, char* username, int32_t* global_room_number)
 {
 	int n = send(sockfd, cr_buffer->data, cr_buffer->size, 0);
 	if (n < 0) error("ERROR writing to socket");
@@ -24,15 +24,17 @@ int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buff
 		deserialize_connection_confirmation(&cc, &cc_buffer);
 		// print_connection_confirmation(&cc);
 		if (cc.status == CONFIRMATION_SUCCESS) {
+			*global_room_number = cc.connected_room.room_number;
 			break;
 		} else if (cc.status == CONFIRMATION_SUCCESS_NEW) {
 			// is this getting the server or client ipv4?
 			printf("Connected to %s with new room number %d\n",
 			inet_ntoa(serv_addr->sin_addr),
 			cc.connected_room.room_number);
+			*global_room_number = cc.connected_room.room_number;
 			break;
 		} else if (cc.status == CONFIRMATION_PENDING) {
-			handle_pending_confirmation(sockfd, &cc, username);
+			handle_pending_confirmation(sockfd, &cc, username, global_room_number);
 		} else {
 			cleanup_buffer(&cc_buffer);
 			error("ERROR: server refused connection");
@@ -109,10 +111,10 @@ ConnectionRequest *cr, char* username)
 	return 0;
 }
 
-// if the client sends a request without a room number or asking for a new room, the server will send back a pending confirmation
+
 // this function handles that by displaying the prompt for a user to select a room
 // and sending the user's choice back to the server
-int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username) {
+int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* username, int32_t* global_room_number) {
 	// display the prompt for a user to select a room
 	print_room_selection_prompt(cc);
 	
@@ -127,12 +129,15 @@ int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* us
 	if (strcmp(room_arg, CREATE_NEW_ROOM_COMMAND) == 0) {
 		type = CREATE_NEW_ROOM;
 		room_number = UNINITIALIZED_ROOM_NUMBER;
+		*global_room_number = UNINITIALIZED_ROOM_NUMBER;
 	} else if (is_number(room_arg)) { // if the room arg is a number
 		type = JOIN_ROOM;
 		room_number = strtol(room_arg, NULL, 10);
+		*global_room_number = room_number;
 	} else {
 		type = CANCEL_HANDSHAKE;
 		room_number = UNINITIALIZED_ROOM_NUMBER;
+		*global_room_number = UNINITIALIZED_ROOM_NUMBER;	
 		printf("Your room choice is invalid. Disconnecting...\n");
 	}
 	// build a new connection request with the user's choice
