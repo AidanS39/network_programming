@@ -35,10 +35,7 @@ int perform_handshake(int sockfd, struct sockaddr_in* serv_addr, Buffer* cr_buff
 			handle_pending_confirmation(sockfd, &cc, username);
 		} else {
 			cleanup_buffer(&cc_buffer);
-			// TODO: should we error(), or keep it printf()? Technically not an
-			// error, an invalid room choice was made.
-			printf("An invalid room number was chosen, or the room chosen does not exist.\nExiting...\n");
-			exit(EXIT_SUCCESS);
+			error("ERROR: server refused connection");
 		}
 		memset(cc_buffer.data, 0, cc_buffer.size);
 	}
@@ -55,17 +52,15 @@ char* username) {
 	// printf("size of cr_buffer: %zu\n", cr_buffer->size);
 	// printf("size of ConnectionRequest: %zu\n", sizeof(ConnectionRequest));
 	ConnectionRequest cr;
-	ConnectionRequestType type;
-	int room_number;
+	ConnectionRequestType type = -1;
+	int room_number = UNINITIALIZED_ROOM_NUMBER;
 	if (argc == 2) {
 		type = SELECT_ROOM;
-		room_number = UNINITIALIZED_ROOM_NUMBER;
 	} else if (argc == 3 && room_arg != NULL) {
 		// if the user wants to create a new room, set the type to CREATE_NEW_ROOM
 		// otherwise they should enter a room number to join
 		if (strcmp(room_arg, CREATE_NEW_ROOM_COMMAND) == 0) {
 			type = CREATE_NEW_ROOM;
-			room_number = UNINITIALIZED_ROOM_NUMBER;
 		} else {
 			type = JOIN_ROOM;
 			room_number = strtol(room_arg, NULL, 10);
@@ -80,7 +75,7 @@ char* username) {
 	}
 }
 
-// given command line arguments, populates a ConnectionRequest struct
+// populates a ConnectionRequest struct
 // NOTE: you technically don't need type, but it makes things more explicit than if I just checked selection_arg being NULL
 int init_connection_request_struct(ConnectionRequestType type, int room_number,
 ConnectionRequest *cr, char* username)
@@ -100,20 +95,17 @@ ConnectionRequest *cr, char* username)
 			cr->type = JOIN_ROOM;
 			cr->room_number = room_number;
 			break;
+		case CANCEL_HANDSHAKE: // canceling handshake
+			cr->type = CANCEL_HANDSHAKE;
+			cr->room_number = UNINITIALIZED_ROOM_NUMBER;
+			break;
 		default:
 			error("ERROR: Invalid number of arguments");
 	}
 
-	set_username(cr, username);
+	// set the username from global variable passed in
+	strcpy(cr->username, username);
 
-	return 0;
-}
-
-// NOTE: we don't want to ask for the username if it was already provided
-int set_username(ConnectionRequest *cr, char* username)
-{
-	strncpy(cr->username, username, strlen(username));
-	
 	return 0;
 }
 
@@ -129,15 +121,19 @@ int handle_pending_confirmation(int sockfd, ConnectionConfirmation* cc, char* us
 	fgets(room_arg, MAX_USERNAME_LEN - 1, stdin);
 	// translate room choice to valid room number
 	trim_whitespace(room_arg);
-	
+
 	ConnectionRequestType type;
 	int room_number;
 	if (strcmp(room_arg, CREATE_NEW_ROOM_COMMAND) == 0) {
 		type = CREATE_NEW_ROOM;
 		room_number = UNINITIALIZED_ROOM_NUMBER;
-	} else {
+	} else if (is_number(room_arg)) { // if the room arg is a number
 		type = JOIN_ROOM;
 		room_number = strtol(room_arg, NULL, 10);
+	} else {
+		type = CANCEL_HANDSHAKE;
+		room_number = UNINITIALIZED_ROOM_NUMBER;
+		printf("Your room choice is invalid. Disconnecting...\n");
 	}
 	// build a new connection request with the user's choice
 	ConnectionRequest cr;

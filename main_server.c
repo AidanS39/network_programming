@@ -16,6 +16,7 @@
 
 #define PORT_NUM 1004
 #define MAX_USERNAME_LEN 32
+#define MAX_FILENAME_LEN 64
 #define BUFFER_SIZE 256
 #define BACKLOG 5
 #define JOINED 1
@@ -34,12 +35,14 @@ typedef struct _ServerState {
 ServerState server_state;
 
 
-
-typedef struct _ThreadArgs {
+typedef struct _HandshakeResult {
 	ConfirmationStatus status;
 	char username[MAX_USERNAME_LEN];
-	int clisockfd;
 	int room_number;
+} HandshakeResult;
+
+typedef struct _ThreadArgs {
+	int clisockfd;
 } ThreadArgs;
 
 typedef struct _USR {
@@ -60,7 +63,12 @@ typedef struct _ROOM {
 ROOM* room_head = NULL;
 ROOM* room_tail = NULL;
 
-
+typedef struct _FileTransferThreadArgs {
+	char recv_user[MAX_USERNAME_LEN];
+	char file_name[MAX_FILENAME_LEN];
+	ROOM* room;
+	USR* send_user;
+} FileTransferThreadArgs;
 
 ROOM* create_room();
 void remove_room(int room_number);
@@ -76,13 +84,13 @@ void announce_status(ROOM* room, int fromfd, char* username, int status);
 void* thread_main(void* args);
 void print_rooms_with_clients();
 
-void initiate_client_handshake(int sockfd, ConnectionRequest* cr, size_t cr_buffer_size);
+HandshakeResult execute_handshake(int clisockfd);
 
 int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
 void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
-void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
-void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd);
+void handle_select_room_request(ConnectionConfirmation* cc);
+void handle_invalid_request(ConnectionConfirmation* cc);
 
 void mock_server_state();
 
@@ -94,8 +102,7 @@ void init_server_state();
 
 void clean_up();
 
-ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd);
-
+ThreadArgs* init_thread_args(int newsockfd);
 
 void init_server_state() {
 	pthread_mutex_init(&server_state.server_state_mutex, NULL);
@@ -373,6 +380,7 @@ int get_color_code(ROOM* room, USR* client) {
 
 	return random_color_code;
 }
+
 void broadcast(ROOM* room, int fromfd, char* username, int color_code, char* message)
 {
 	// figure out sender address
@@ -467,6 +475,7 @@ int cc_set_available_rooms(ConnectionConfirmation* cc) {
 
 
 void handle_join_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+	// check if room number is valid
 	ROOM* requested_room = find_room(cr->room_number);
 
 	if (requested_room != NULL) { // room exists
@@ -498,7 +507,7 @@ void handle_create_new_room_request(ConnectionConfirmation* cc, ConnectionReques
 	cc->connected_room.num_connected_clients = new_room->num_connected_clients;
 }
 
-void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+void handle_select_room_request(ConnectionConfirmation* cc) {
 	// status
 	cc->status = CONFIRMATION_PENDING;
 	// connected room
@@ -508,7 +517,7 @@ void handle_select_room_request(ConnectionConfirmation* cc, ConnectionRequest* c
 	cc_set_available_rooms(cc);
 }
 
-void handle_invalid_request(ConnectionConfirmation* cc, ConnectionRequest* cr, int clisockfd) {
+void handle_invalid_request(ConnectionConfirmation* cc) {
 	cc->status = CONFIRMATION_FAILURE;
 	cc->connected_room.room_number = UNINITIALIZED_ROOM_NUMBER;
 	cc->connected_room.num_connected_clients = UNINITIALIZED_NUM_CONNECTED_CLIENTS;
@@ -528,11 +537,12 @@ int init_connection_confirmation(ConnectionConfirmation* cc, ConnectionRequest* 
 			if (server_state.num_rooms == 0) { // no available rooms so create one
 				handle_create_new_room_request(cc, cr, clisockfd);
 			} else { // there are available rooms so select one
-				handle_select_room_request(cc, cr, clisockfd);
+				handle_select_room_request(cc);
 			}
 			break;
 		default:
-			handle_invalid_request(cc, cr, clisockfd);
+			// including when the client cancels the handshake
+			handle_invalid_request(cc);
 			break;
 	}
 	return 0;
@@ -570,21 +580,166 @@ void print_rooms_with_clients() {
 	}
 }
 
+USR* find_client_by_username(ROOM* room, char* username) {
+	USR* cur = room->usr_head;
 
+	while (cur != NULL) {
+		if (strncmp(cur->username, username, MAX_USERNAME_LEN) == 0) {
+			break;
+		}
+		cur = cur->next;
+	}
+	// if client does not exist, NULL is returned
+	return cur;
+}
+
+int is_filetransfer(char* buffer) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	// determine if first token in message is "SEND"
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	// if there are no more tokens, return false (0)
+	if (send_token == NULL) {
+		return 0;
+	}
+	// if yes, return true (1)
+	else if (strncmp(send_token, "SEND", strlen(send_token)) == 0) {
+		return 1;
+	}
+	// if no, return false (0)
+	else {
+		return 0;
+	}
+}
+
+FileTransferThreadArgs* init_FTthread_args(char* recv_user, char* file_name, ROOM* room, USR* send_user) {
+
+	// prepare ThreadArgs structure to pass client socket
+	FileTransferThreadArgs* args = (FileTransferThreadArgs*)
+	malloc(sizeof(FileTransferThreadArgs));
+	if (args == NULL) error("ERROR creating FT thread arguments");
+	
+	// set recv username
+	strncpy(args->recv_user, recv_user, MAX_USERNAME_LEN);
+	
+	// set file name
+	strncpy(args->file_name, file_name, MAX_FILENAME_LEN);
+	
+	// set room
+	args->room = room;
+	
+	// set sending client
+	args->send_user = send_user;
+
+	return args;
+}
+
+void print_thread_args(char* recv_user, char* file_name) {
+	printf("Receiving user: %s\n", recv_user);
+	printf("File name: %s\n", file_name);
+}
+
+void* thread_file_transfer(void* args) {
+	// get thread arguments
+	char recv_user[MAX_USERNAME_LEN];
+	strncpy(recv_user, ((FileTransferThreadArgs*) args)->recv_user, MAX_USERNAME_LEN);
+	char file_name[MAX_FILENAME_LEN];
+	strncpy(file_name, ((FileTransferThreadArgs*) args)->file_name, MAX_FILENAME_LEN);
+	ROOM* room = ((FileTransferThreadArgs*) args)->room;
+	USR* send_user = ((FileTransferThreadArgs*) args)->send_user;
+	// free argument memory
+	free(args);
+	
+	// TEST print statement
+	print_thread_args(recv_user, file_name);
+	
+	// find client by username
+	USR* recv_client = find_client_by_username(room, recv_user);
+	if (recv_client == NULL) {
+		printf("receiving client not found\n");
+		pthread_exit(NULL);
+	}
+	printf("receiving client found!\n");
+
+	int recvsockfd = recv_client->clisockfd;
+	// TODO: all this in this order (ask me why)
+	
+	// receive file from sending client (somehow...?)
+		
+	// notify receiving user of file transfer, ask for permission "Y/N"
+	char buffer[BUFFER_SIZE];
+	memset(buffer, 0, BUFFER_SIZE);
+	sprintf(buffer, "SEND %s %s", send_user->username, file_name);
+	send(recvsockfd, buffer, BUFFER_SIZE, 0);
+	
+	// receive response from receiving user
+	memset(buffer, 0, BUFFER_SIZE);
+	recv(recvsockfd, buffer, BUFFER_SIZE, 0);
+
+	// if recv user denies
+	if (buffer[0] != 'Y') {
+		// TODO: maybe return status code of DENIED or something like that?
+	}
+	// if recv user agrees
+	else {
+		// send file to receiving client (somehow...?)
+	}
+
+	pthread_exit(NULL);
+}
+
+int transfer_file(char* buffer, ROOM* room, USR* send_user) {
+	// create copy of message in buffer (needed for strtok_r)
+	char message[BUFFER_SIZE];
+	strncpy(message, buffer, strlen(buffer));
+	
+	char* saveptr;
+	char* send_token = strtok_r(message, " ", &saveptr);
+	if (send_token == NULL) {
+		return -1;
+	}
+	char* recv_user = strtok_r(NULL, " ", &saveptr);
+	if (recv_user == NULL) {
+		return -1;
+	}
+	char* file_name = strtok_r(NULL, " ", &saveptr);
+	if (file_name == NULL) {
+		return -1;
+	}
+	
+	// initialize file transfer thread arguments
+	FileTransferThreadArgs* args = init_FTthread_args(recv_user, file_name, room, send_user);
+
+	// create file transferring thread
+	pthread_t file_tid;
+	if (pthread_create(&file_tid, NULL, thread_file_transfer, (void*) args) != 0) {
+		error("ERROR creating a file transfer thread");
+	}
+	
+	// wait for file transferring thread to finish
+	pthread_join(file_tid, NULL);
+
+	return 0;
+}
 
 void* thread_main(void* args)
 {
 	// make sure thread resources are deallocated upon return
 	pthread_detach(pthread_self());
 
-
 	// get socket descriptor from argument
-	ConfirmationStatus status = ((ThreadArgs*) args)->status;
 	int clisockfd = ((ThreadArgs*) args)->clisockfd;
-	char username[MAX_USERNAME_LEN];
-	strncpy(username, ((ThreadArgs*) args)->username, MAX_USERNAME_LEN);
-	int room_number = ((ThreadArgs*) args)->room_number;
 	free(args);
+
+	HandshakeResult handshake_result = execute_handshake(clisockfd);
+	ConfirmationStatus status = handshake_result.status;
+	char username[MAX_USERNAME_LEN];
+	strncpy(username, handshake_result.username, MAX_USERNAME_LEN);
+	int room_number = handshake_result.room_number;
+
 	
 	if (status == CONFIRMATION_PENDING) {
 		// keep sending confirmations until the handshake succeeds or fails
@@ -659,14 +814,21 @@ void* thread_main(void* args)
 
 	nrcv = recv(clisockfd, buffer, 255, 0);
 	if (nrcv < 0) error("ERROR recv() failed first recv");
-
+	
 	while (nrcv > 0 && buffer[0] != '\n') {
-		// we send the message to everyone except the sender
-		broadcast(room, clisockfd, username, color_code, buffer);
-
-			memset(buffer, 0, 256);
-			nrcv = recv(clisockfd, buffer, 255, 0);
-			if (nrcv < 0) error("ERROR recv() failed in while loop");
+		if (is_filetransfer(buffer)) {
+			// transfer file
+			if (transfer_file(buffer, room, client) == -1) {
+				// send invalid format message to sending user
+				printf("File transfer failed.\n");
+			}
+		} else {
+			// we send the message to everyone except the sender
+			broadcast(room, clisockfd, username, color_code, buffer);
+		}
+		memset(buffer, 0, 256);
+		nrcv = recv(clisockfd, buffer, 255, 0);
+		if (nrcv < 0) error("ERROR recv() failed in while loop");
 	}
 
 	remove_client(room, clisockfd);
@@ -688,21 +850,58 @@ void* thread_main(void* args)
 	return NULL;
 }
 
-ThreadArgs* init_thread_args(ConnectionConfirmation* cc, char* username, int newsockfd) {
-
-	// prepare ThreadArgs structure to pass client socket
+ThreadArgs* init_thread_args(int newsockfd) {
 	ThreadArgs* args = (ThreadArgs*) malloc(sizeof(ThreadArgs));
-	if (args == NULL) error("ERROR creating thread argument");
-	
-	args->status = cc->status;
-	// set room_number
-	args->room_number = cc->connected_room.room_number;
-	// set username
-	strncpy(args->username, username, MAX_USERNAME_LEN);
-	// set socket file descriptor
+	if (args == NULL) error("ERROR creating thread arguments");
 	args->clisockfd = newsockfd;
-
 	return args;
+}
+
+
+
+HandshakeResult execute_handshake(int clisockfd) {
+	/*================================HANDSHAKE================================*/
+	// retrieve room_number and username from client
+	Buffer cr_buffer;
+	init_buffer(&cr_buffer, sizeof(ConnectionRequest));
+	ConnectionRequest cr;
+
+	Buffer cc_buffer;
+	init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
+	ConnectionConfirmation cc;
+
+	int handshake_complete = 0;
+	while (handshake_complete == 0) {
+		// client sends connection request server processes it into a ConnectionRequest struct
+		int nrcv = recv(clisockfd, cr_buffer.data, cr_buffer.size, 0);
+		if (nrcv < 0) error("ERROR recv() failed");
+		deserialize_connection_request(&cr, &cr_buffer);
+		// print_connection_request_struct(&cr);
+
+		// Process the connection request and generate a connection confirmation in response
+		// generate connection confirmation from connection request
+		init_connection_confirmation(&cc, &cr, clisockfd);
+		// serialize connection confirmation
+		serialize_connection_confirmation(&cc_buffer, &cc);
+
+		if (cc.status != CONFIRMATION_PENDING) {
+			handshake_complete = 1;
+		}
+
+		// send the confirmation to the client
+		send(clisockfd, cc_buffer.data, cc_buffer.size, 0);
+	}
+
+	// Make sure to clean up the buffer
+	cleanup_buffer(&cr_buffer);
+	cleanup_buffer(&cc_buffer);
+
+	// return struct with confirmation status, room number, and username
+	HandshakeResult handshake_result;
+	handshake_result.status = cc.status;
+	handshake_result.room_number = cc.connected_room.room_number;
+	strncpy(handshake_result.username, cr.username, MAX_USERNAME_LEN);
+	return handshake_result;
 }
 
 int main()
@@ -730,8 +929,6 @@ int main()
 
 	listen(sockfd, BACKLOG); // maximum number of connections = 5
 	
-	int nrcv;
-
 	while(1) {
 		
 		struct sockaddr_in cli_addr;
@@ -743,37 +940,9 @@ int main()
 			error("ERROR on accept");
 		}
 		
-		/*================================HANDSHAKE================================*/
-		// retrieve room_number and username from client
-		Buffer cr_buffer;
-		init_buffer(&cr_buffer, sizeof(ConnectionRequest));
-
-		// client sends connection request server processes it into a ConnectionRequest struct
-		nrcv = recv(newsockfd, cr_buffer.data, cr_buffer.size, 0);
-		if (nrcv < 0) error("ERROR recv() failed");
-		ConnectionRequest cr;
-		deserialize_connection_request(&cr, &cr_buffer);
-		// print_connection_request_struct(&cr);
-
-		// Process the connection request and generate a connection confirmation in response
-		// generate connection confirmation from connection request
-		ConnectionConfirmation cc;
-		init_connection_confirmation(&cc, &cr, newsockfd);
-		// serialize connection confirmation
-		Buffer cc_buffer;
-		init_buffer(&cc_buffer, sizeof(ConnectionConfirmation));
-		serialize_connection_confirmation(&cc_buffer, &cc);
-		// send the confirmation to the client
-		send(newsockfd, cc_buffer.data, cc_buffer.size, 0);
-
-		// Make sure to clean up the buffer
-		cleanup_buffer(&cr_buffer);
-		cleanup_buffer(&cc_buffer);
-
 		/*=================SET THREAD ARGS=============================*/
-		
-		
-		ThreadArgs* args = init_thread_args(&cc, cr.username, newsockfd);
+		// ThreadArgs* args = init_thread_args(&cc, cr.username, newsockfd);
+		ThreadArgs* args = init_thread_args(newsockfd);
 
 		pthread_t tid;
 		if (pthread_create(&tid, NULL, thread_main, (void*) args) != 0) {
